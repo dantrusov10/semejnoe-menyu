@@ -321,10 +321,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .prod-ico .sk-ico,
 .recipe-pick .sk-ico {
-  width: 1.2em;
-  height: 1.2em;
-  color: var(--ink);
-  opacity: 0.88;
+  width: 1.25em;
+  height: 1.25em;
 }
 .recipe-count { font-weight: 750; color: var(--muted); margin: 8px 0 12px; }
 
