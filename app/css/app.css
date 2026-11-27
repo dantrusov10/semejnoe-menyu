@@ -128,8 +128,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sk-drawer-backdrop,
 .sk-drawer-close { display: none; }
 
-/* Phone: bottom tabs + swipe/hamburger side drawer */
-.sk-tabbar,
+/* Phone: swipe/hamburger side drawer only (no bottom tabs) */
 .sk-top-eyebrow,
 .sk-pill-mobile { display: none; }
 
@@ -206,48 +205,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
     transform: translateX(0);
   }
 
-  .sk-tabbar {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 40;
-    gap: 0;
-    margin: 0;
-    padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px));
-    background: rgba(247, 248, 250, 0.96);
-    border-top: 1px solid var(--line);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-  }
-  .sk-tabbar button {
-    border: 0;
-    background: transparent;
-    min-height: 52px;
-    padding: 4px 2px;
-    border-radius: 12px;
-    font-size: 0.68rem;
-    font-weight: 750;
-    color: var(--muted);
-    cursor: pointer;
-    line-height: 1.1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-  }
-  .sk-tab-ico {
-    font-size: 0.95rem;
-    line-height: 1;
-    opacity: 0.9;
-  }
-  .sk-tabbar button.active {
-    color: #fff;
-    background: var(--accent);
-  }
   .sk-top-eyebrow,
   .sk-pill-mobile { display: inline-flex; }
 }
@@ -257,7 +214,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   max-width: 1100px;
   margin: 0 auto;
   padding: var(--pad);
-  padding-bottom: 96px;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   width: 100%;
   min-width: 0;
 }
@@ -1102,7 +1059,7 @@ textarea.sk-input {
 
 @media (max-width: 860px) {
   .sk-shell {
-    padding: 10px 12px calc(92px + env(safe-area-inset-bottom, 0px));
+    padding: 10px 12px calc(20px + env(safe-area-inset-bottom, 0px));
   }
   .sk-top {
     margin-bottom: 12px;
@@ -1238,12 +1195,11 @@ textarea.sk-input {
   }
   .chart-box { height: 220px; }
   .sk-toast {
-    bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   }
 }
 
 @media (max-width: 380px) {
-  .sk-tabbar button { font-size: 0.66rem; }
   .sk-forecast {
     grid-template-columns: 1fr;
   }

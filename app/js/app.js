@@ -281,8 +281,6 @@ function updateSyncBadge() {
   });
 }
 
-const MORE_SCREENS = new Set(["period", "recipes", "stats", "budget", "sync"]);
-
 function isMobileNav() {
   return window.matchMedia("(max-width: 860px)").matches;
 }
@@ -309,19 +307,8 @@ function toggleDrawer() {
   else openDrawer();
 }
 
-/** @deprecated alias — «Ещё» открывает полное боковое меню */
-function closeMoreSheet() {
-  closeDrawer();
-}
-function openMoreSheet() {
-  openDrawer();
-}
-
 function syncNavUi(name) {
   $$("#nav-list [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
-  $$("#tabbar [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
-  const moreBtn = $("#tabbar [data-more]");
-  if (moreBtn) moreBtn.classList.toggle("active", MORE_SCREENS.has(name));
 }
 
 function bindEdgeSwipeDrawer() {
@@ -1800,10 +1787,6 @@ async function boot() {
   $$("#nav-list [data-screen]").forEach((b) => {
     b.onclick = () => setScreen(b.dataset.screen);
   });
-  $$("#tabbar [data-screen]").forEach((b) => {
-    b.onclick = () => setScreen(b.dataset.screen);
-  });
-  $("#tabbar [data-more]")?.addEventListener("click", () => openDrawer());
   $("#menu-btn")?.addEventListener("click", () => toggleDrawer());
   $("#drawer-backdrop")?.addEventListener("click", () => closeDrawer());
   $("#drawer-close")?.addEventListener("click", () => closeDrawer());
