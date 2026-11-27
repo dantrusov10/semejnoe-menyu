@@ -39,6 +39,95 @@ export function banForMonth(settings, dishId, days = 30) {
   return next;
 }
 
+/**
+ * Умные замены без LLM: тот же тип/белок/цена/дни + любимое/−бан.
+ * Позже поверх можно вызвать LLM с этим shortlist.
+ */
+export function suggestReplacements(dish, allDishes, settings, opts = {}) {
+  const limit = opts.limit || 5;
+  const priceTol = opts.priceTol || 0.45;
+  const base = dish.costPerServing || 1;
+  const scored = [];
+  for (const d of allDishes) {
+    if (d.id === dish.id) continue;
+    if (settings.disliked?.includes(d.id) || isBanned(d.id, settings)) continue;
+    if (d.type !== dish.type && !(dish.type === "main" && d.type === "soup")) continue;
+    const priceDiff = Math.abs((d.costPerServing || 0) - base) / base;
+    if (priceDiff > priceTol && (d.costPerServing || 0) > base * 1.5) continue;
+    let score = 40;
+    if (d.protein === dish.protein) score += 20;
+    if (d.category === dish.category) score += 10;
+    if (Math.abs((d.batchDays || 1) - (dish.batchDays || 1)) <= 1) score += 10;
+    if (settings.loved?.includes(d.id)) score += 15;
+    score -= priceDiff * 25;
+    score -= Math.min(15, ((d.timeMin || 40) - (dish.timeMin || 40)) / 5);
+    scored.push({ dish: d, score, why: explainReplace(dish, d) });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+
+function explainReplace(from, to) {
+  const bits = [];
+  if (to.protein === from.protein) bits.push("тот же белок");
+  if (to.category === from.category) bits.push("та же категория");
+  if ((to.batchDays || 1) === (from.batchDays || 1)) bits.push(daysRu(to.batchDays || 1));
+  bits.push(`~${Math.round(to.costPerServing || 0)} ₽/порц`);
+  return bits.join(" · ");
+}
+
+/** План на произвольный период от даты старта */
+export function buildPeriodPlan(data, settings, opts = {}) {
+  const days = Math.max(1, Math.min(90, +opts.days || 7));
+  const start = opts.startDate ? new Date(opts.startDate) : new Date();
+  start.setHours(12, 0, 0, 0);
+  const adults = Math.max(0, +opts.adults || 2);
+  const childPortions = Math.max(0, +opts.childPortions || 1);
+  const childAge = opts.childAge ?? 1.5;
+  const weekNum = ((opts.weekNum || 1) - 1) % 12 + 1;
+  const template = draftWeekPlan(data, settings, weekNum);
+  const plan = [];
+  for (let i = 0; i < days; i++) {
+    const dt = new Date(start);
+    dt.setDate(start.getDate() + i);
+    const tpl = template[i % 7];
+    const iso = dt.toISOString().slice(0, 10);
+    const dayName = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"][dt.getDay()];
+    plan.push({
+      ...tpl,
+      date: iso,
+      dayName,
+      label: `${dayName} ${dt.getDate()}.${String(dt.getMonth() + 1).padStart(2, "0")}`,
+      day: i + 1,
+      week: Math.floor(i / 7) + 1,
+      people: { adults, childPortions, childAge },
+      meta: {
+        breakfast: { people: adults + childPortions, adults, child: childPortions },
+        lunch: { people: adults + childPortions, adults, child: childPortions },
+        dinner: { people: adults + childPortions, adults, child: childPortions },
+      },
+    });
+  }
+  return plan;
+}
+
+/** Покрытие рецепта запасами + истекающие */
+export function recipeStockHint(dish, inventoryAmountsMap, products, expiringIds = new Set()) {
+  if (!dish?.ingredients?.length) return { coverage: 0, have: 0, total: 0, missing: [], expiring: [] };
+  let have = 0;
+  const missing = [];
+  const expiring = [];
+  for (const ing of dish.ingredients) {
+    const amt = inventoryAmountsMap[ing.id] || 0;
+    if (amt > 0) {
+      have += 1;
+      if (expiringIds.has(ing.id)) expiring.push(ing.id);
+    } else missing.push(ing.id);
+  }
+  const total = dish.ingredients.length;
+  return { coverage: total ? have / total : 0, have, total, missing, expiring };
+}
+
 export function amountLabel(product, amount) {
   if (!product) return String(amount);
   if (product.unit === "pcs") return `${amount} шт`;

@@ -17,7 +17,7 @@
     <header class="sk-top">
       <div>
         <h1 class="sk-brand"><span>Богданиха · дом</span>Семейная кухня</h1>
-        <p class="sk-lead">Запасы, план и готовка без ВкусВилл — на оба телефона из одного облака.</p>
+        <p class="sk-lead">850+ рецептов, запасы продуктов и блюд, план на период — общее облако на оба телефона.</p>
       </div>
       <div class="sk-tools">
         <span class="sk-pill" id="sync-badge">облако</span>
@@ -31,6 +31,7 @@
     <nav class="sk-nav" id="nav-list" aria-label="Разделы">
       <button type="button" data-screen="today" class="active">Сегодня</button>
       <button type="button" data-screen="plan">План</button>
+      <button type="button" data-screen="period">Период</button>
       <button type="button" data-screen="inventory">Запасы</button>
       <button type="button" data-screen="basket">Корзина</button>
       <button type="button" data-screen="recipes">Рецепты</button>
@@ -42,6 +43,7 @@
     <main>
       <section class="sk-panel active" id="screen-today"></section>
       <section class="sk-panel" id="screen-plan"></section>
+      <section class="sk-panel" id="screen-period"></section>
       <section class="sk-panel" id="screen-inventory"></section>
       <section class="sk-panel" id="screen-basket"></section>
       <section class="sk-panel" id="screen-recipes"></section>
@@ -56,6 +58,13 @@
       <button type="button" class="sk-btn sk-btn-ghost sk-modal-close" id="modal-close">Закрыть</button>
       <h2 class="sk-brand" style="font-size:1.45rem;margin-bottom:8px" id="recipeModalTitle">Рецепт</h2>
       <div id="recipeModalBody"></div>
+    </div>
+  </div>
+  <div class="sk-modal" id="productModal" role="dialog" aria-modal="true">
+    <div class="sk-modal-card">
+      <button type="button" class="sk-btn sk-btn-ghost sk-modal-close" id="product-modal-close">Закрыть</button>
+      <h2 class="sk-brand" style="font-size:1.35rem;margin-bottom:8px" id="productModalTitle">Продукт</h2>
+      <div id="productModalBody"></div>
     </div>
   </div>
   <div class="sk-toast" id="toast" role="status"></div>

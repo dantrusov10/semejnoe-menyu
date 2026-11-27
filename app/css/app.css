@@ -617,6 +617,35 @@ button, input, select, textarea { font: inherit; color: inherit; }
   flex: 0 0 auto;
 }
 
+.inv-table-wrap {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: auto;
+  max-height: min(70vh, 720px);
+}
+.inv-table { margin: 0; }
+.inv-row { cursor: pointer; }
+.inv-row:hover { background: var(--surface-2); }
+.inv-row.has td:first-child b { color: var(--ok); }
+.inv-row.exp-soon { background: #fbf3e6; }
+.inv-row.exp-expired { background: #f7e8e8; }
+.exp-soon { border-color: #e6d2a8 !important; }
+.exp-expired { border-color: #e0b4b4 !important; }
+.sk-match.warn { border-color: #e6d2a8; background: #fbf6ec; }
+.sk-meal.stock-ok { box-shadow: inset 3px 0 0 var(--ok); }
+.sk-meal.stock-mid { box-shadow: inset 3px 0 0 var(--accent-2); }
+.sk-meal.stock-low { box-shadow: inset 3px 0 0 var(--danger); }
+.sk-meal.exp-soon { box-shadow: inset 3px 0 0 var(--warn); background: #fbf6ec; }
+.basket-check {
+  display: flex;
+  gap: 10px;
+  align-items: start;
+  cursor: pointer;
+}
+.basket-check input { width: 20px; height: 20px; margin-top: 2px; flex: 0 0 auto; }
+.basket-check small { display: block; color: var(--muted); margin-top: 2px; }
+
 .chart-box { position: relative; height: 260px; }
 @media (min-width: 768px) { .chart-box { height: 320px; } }
 

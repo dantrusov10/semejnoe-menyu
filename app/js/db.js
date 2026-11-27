@@ -76,8 +76,10 @@ export function defaultSettings() {
     bannedUntil: {},
     shoppingList: [],
     treats: [],
+    mealStock: [],
     invZones: {},
     basketPick: { days: [0, 1, 2, 3, 4, 5, 6], meals: { breakfast: true, lunch: true, dinner: true } },
+    period: { days: 7, adults: 2, childPortions: 1, childAge: 1.5, mode: "recipes" },
   };
 }
 

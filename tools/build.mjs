@@ -5,6 +5,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { EXTRA_PRODUCTS, enrichProduct, generateRecipes } from "./gen-catalog.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -101,7 +102,8 @@ const products = [
   { id: "tilapia", name: "Филе тилапии с/м", unit: "g", price: 0.82, store: "parnoe" },
   { id: "salmon_pink", name: "Горбуша", unit: "g", price: 0.55, store: "ashan" },
   { id: "herring_fillet", name: "Сельдь филе", unit: "g", price: 0.5, store: "ashan" },
-];
+  ...EXTRA_PRODUCTS,
+].map(enrichProduct);
 
 const byId = Object.fromEntries(products.map((p) => [p.id, p]));
 
@@ -120,6 +122,7 @@ function inferCategory(d) {
   if (d.type === "breakfast") return "завтраки";
   if (d.type === "soup") return "супы";
   if (d.type === "snack") return "перекусы";
+  if (d.type === "dessert") return "десерты";
   const t = new Set(d.tags || []);
   if (t.has("рыба")) return "рыба";
   if (t.has("печень")) return "печень";
@@ -432,7 +435,9 @@ const snacks = [
   dish({ id: "k14", name: "Куриное пюре/мягкие кусочки", type: "snack", batchDays: 1, servings: 1, timeMin: 5, ing: [["chicken_breast",50],["zucchini",40]], steps: ["Из партии ужина, мелко."], tags: ["детское"] }),
 ];
 
-const allDishes = [...breakfasts, ...soups, ...mains, ...snacks];
+const handDishes = [...breakfasts, ...soups, ...mains, ...snacks];
+const generated = generateRecipes(dish, handDishes.map((d) => d.id));
+const allDishes = [...handDishes, ...generated];
 const dishMap = Object.fromEntries(allDishes.map((d) => [d.id, d]));
 
 /** Меню 12 недель: суп на 3 дня, основное на 2 дня, завтраки ротация без соседних повторов */
@@ -495,16 +500,27 @@ const budget = {
   totalBand: "56–75 тыс. ₽",
 };
 
-const payload = { stores: STORES, products, dishes: allDishes, menu, budget, meta: {
-  family: "2 взрослых + ребёнок 1.5",
-  location: "Богданиха, Ленинский р-н, МО",
-  rules: [
-    "Субпродукты только печень",
-    "Рыба — филе, без костей",
-    "Ребёнку: без сахара/мёда/орехов, соль умеренно",
-    "Алкоголь и вкусняшки — отдельной строкой",
-  ],
-}};
+const cats = [...new Set(products.map((p) => p.category))].sort();
+const payload = {
+  stores: STORES,
+  products,
+  productCategories: cats,
+  dishes: allDishes,
+  menu,
+  budget,
+  meta: {
+    family: "2 взрослых + ребёнок 1.5",
+    location: "Богданиха, Ленинский р-н, МО",
+    dishCount: allDishes.length,
+    productCount: products.length,
+    rules: [
+      "Субпродукты только печень",
+      "Рыба — филе, без костей",
+      "Ребёнку: без сахара/мёда/орехов, соль умеренно",
+      "Алкоголь и вкусняшки — отдельной строкой",
+    ],
+  },
+};
 
 fs.writeFileSync(path.join(dataDir, "app-data.json"), JSON.stringify(payload, null, 2), "utf8");
 fs.writeFileSync(
