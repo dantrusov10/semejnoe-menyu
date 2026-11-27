@@ -24,6 +24,7 @@ import {
   proteinBalance,
   markBatchHints,
   recipeStockHint,
+  repairPlanLabels,
 } from "./engine.js";
 import { normalizeInventory, invAmount, setInvAmount, inventoryAmounts, expiryStatus } from "./inventory.js";
 import { createStockUi } from "./stock-ui.js";
@@ -161,7 +162,10 @@ async function loadLocal() {
   }
   if (state.budget.sweetSpent == null) state.budget.sweetSpent = 0;
   const savedPlan = await dbGet("plan", null);
-  state.plan = savedPlan?.length ? savedPlan : draftWeekPlan(state.data, state.settings, state.weekNum);
+  state.plan = repairPlanLabels(
+    savedPlan?.length ? savedPlan : draftWeekPlan(state.data, state.settings, state.weekNum),
+    state.data?.menu
+  );
   mergeCustomProducts();
 }
 
@@ -204,7 +208,7 @@ async function syncPull(preferCloud = true) {
     const cloud = await pullCloud();
     if (preferCloud) {
       if (cloud.inventory) state.inventory = normalizeInventory(cloud.inventory);
-      if (cloud.plan?.length) state.plan = cloud.plan;
+      if (cloud.plan?.length) state.plan = repairPlanLabels(cloud.plan, state.data?.menu);
       if (cloud.settings) {
         state.settings = { ...defaultSettings(), ...state.settings, ...cloud.settings };
         if (!Array.isArray(state.settings.mealStock)) state.settings.mealStock = [];

@@ -517,6 +517,50 @@ export function todayKey() {
 }
 
 /** День плана: по умолчанию день недели от понедельника = индекс в текущем плане */
+const DOW_RU = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+
+/** Подпись дня из даты; чинит кракозябры после битой кодировки в облаке. */
+export function formatDayLabel(day) {
+  const iso = day?.date;
+  if (iso) {
+    const dt = new Date(`${iso}T12:00:00`);
+    if (!Number.isNaN(dt.getTime())) {
+      const dayName = DOW_RU[dt.getDay()];
+      return {
+        dayName,
+        label: `${dayName} ${dt.getDate()}.${String(dt.getMonth() + 1).padStart(2, "0")}`,
+      };
+    }
+  }
+  const dayName = day?.dayName && !/[�?]{2,}/.test(day.dayName) ? day.dayName : "День";
+  const label = day?.label && !/[�?]{2,}/.test(day.label) ? day.label : dayName;
+  return { dayName, label };
+}
+
+export function repairPlanLabels(plan, menu = []) {
+  if (!Array.isArray(plan)) return [];
+  const byKey = new Map((menu || []).map((m) => [`${m.week}:${m.day}`, m]));
+  return plan.map((day) => {
+    const src = byKey.get(`${day?.week}:${day?.day}`);
+    if (src?.label) {
+      return {
+        ...day,
+        dayName: src.dayName || day.dayName,
+        label: src.label,
+        cookHint: src.cookHint || day.cookHint,
+      };
+    }
+    const fixed = formatDayLabel(day);
+    const cookHint =
+      day?.cookHint && !/[�?]{2,}/.test(day.cookHint)
+        ? day.cookHint
+        : day?.day % 3 === 0
+          ? "День новой варки"
+          : "Разогрев / лёгкая готовка";
+    return { ...day, dayName: fixed.dayName, label: fixed.label, cookHint };
+  });
+}
+
 export function planDayIndex(plan) {
   if (!plan?.length) return 0;
   const js = new Date().getDay(); // 0 Sun
