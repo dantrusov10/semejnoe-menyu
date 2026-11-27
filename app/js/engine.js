@@ -1,0 +1,306 @@
+/** Алгоритмы: подбор из запасов, автоплан, корзина. */
+
+export function indexCatalog(data) {
+  const products = Object.fromEntries(data.products.map((p) => [p.id, p]));
+  const dishes = Object.fromEntries(data.dishes.map((d) => [d.id, d]));
+  return { products, dishes, stores: data.stores, budget: data.budget, menu: data.menu };
+}
+
+export function storeName(stores, id) {
+  return stores[id]?.name || id;
+}
+
+export function rub(n) {
+  return `${Math.round(n || 0).toLocaleString("ru-RU")} ₽`;
+}
+
+export function amountLabel(product, amount) {
+  if (!product) return String(amount);
+  if (product.unit === "pcs") return `${amount} шт`;
+  if (product.unit === "ml") return `${amount} мл`;
+  return `${amount} г`;
+}
+
+/** Жёсткие ограничения ребёнка / семьи */
+export function violatesHardConstraints(dish, settings) {
+  const tags = new Set(dish.tags || []);
+  const name = (dish.name || "").toLowerCase();
+  const ids = new Set((dish.ingredients || []).map((i) => i.id));
+  const r = settings.childRules || {};
+
+  if (tags.has("орехи") || ids.has("nuts")) return "орехи";
+  if (r.noHoney && (ids.has("honey_adult") || name.includes("мёд"))) {
+    // мёд только взрослым — не блок рецепта целиком, если есть детская пометка
+  }
+  if (ids.has("sugar") && dish.type === "snack" && r.noSugar) return "сахар в перекусе";
+  // субпродукты кроме печени
+  if (name.includes("сердц") || name.includes("рубец")) return "субпродукт";
+  return null;
+}
+
+/**
+ * Подбор блюд из запасов.
+ * inventory: { [productId]: number }
+ */
+export function matchFromInventory(dishes, products, inventory, settings, opts = {}) {
+  const minServ = opts.minServings ?? 2;
+  const mode = opts.mode || "almost"; // strict | almost | waste
+  const maxMissingRub = opts.maxMissingRub ?? 250;
+  const results = [];
+
+  for (const dish of dishes) {
+    const hard = violatesHardConstraints(dish, settings);
+    if (hard) continue;
+    if (settings.disliked?.includes(dish.id)) continue;
+    if (!dish.ingredients?.length) continue;
+
+    let portions = Infinity;
+    let haveCount = 0;
+    let total = dish.ingredients.length;
+    const missing = [];
+    let missingCost = 0;
+    let wasteScore = 0;
+
+    for (const ing of dish.ingredients) {
+      const have = inventory[ing.id] || 0;
+      const per = ing.amount / Math.max(1, dish.servings);
+      if (have > 0) {
+        haveCount += 1;
+        portions = Math.min(portions, have / per);
+        // скоропорт: молочка/зелень/мясо без expiry — лёгкий буст если есть
+        const p = products[ing.id];
+        if (p && ["milk", "kefir", "sourcream", "tvorog", "dill", "chicken_cheap"].includes(ing.id)) {
+          wasteScore += 0.05;
+        }
+      } else {
+        const p = products[ing.id];
+        const cost = (p?.price || 0) * ing.amount;
+        missing.push({ id: ing.id, amount: ing.amount, cost, name: p?.name || ing.id });
+        missingCost += cost;
+      }
+    }
+
+    if (!Number.isFinite(portions)) portions = 0;
+    portions = Math.floor(portions * 10) / 10;
+    const coverage = total ? haveCount / total : 0;
+
+    if (mode === "strict" && missing.length) continue;
+    if (mode === "almost" && missingCost > maxMissingRub && coverage < 0.7) continue;
+    if (portions < minServ && missing.length === 0) continue;
+    if (mode === "strict" && portions < minServ) continue;
+
+    const preferenceFit = settings.loved?.includes(dish.id) ? 1 : 0;
+    const varietyBonus = 0.5; // без истории — нейтрально
+    const effortNorm = Math.min(1, (dish.timeMin || 40) / 90);
+    const missingCostNorm = Math.min(1, missingCost / 500);
+
+    const score =
+      40 * coverage +
+      20 * Math.min(1, portions / 6) +
+      15 * Math.min(1, wasteScore) +
+      10 * preferenceFit +
+      10 * varietyBonus -
+      15 * missingCostNorm -
+      10 * effortNorm;
+
+    results.push({
+      dish,
+      coverage,
+      portions: missing.length ? Math.max(portions, 0) : portions,
+      missing,
+      missingCost,
+      score,
+      why:
+        coverage >= 0.99
+          ? "Всё есть на кухне"
+          : missing.length
+            ? `Не хватает на ~${Math.round(missingCost)} ₽`
+            : "Можно готовить",
+    });
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  return results;
+}
+
+/** Масштаб ингредиентов */
+export function scaleIngredients(dish, targetServings) {
+  const scale = targetServings / Math.max(1, dish.servings);
+  return (dish.ingredients || []).map((ing) => {
+    let amount = ing.amount * scale;
+    if (ing.id === "egg") amount = Math.max(1, Math.round(amount));
+    else if (amount >= 50) amount = Math.round(amount / 10) * 10;
+    else amount = Math.round(amount);
+    return { id: ing.id, amount };
+  });
+}
+
+/**
+ * Корзина: слоты плана → need − inventory → по магазинам
+ * slots: [{ recipeId, servings }]
+ */
+export function buildBasket(slots, dishes, products, inventory, opts = {}) {
+  const reserve = opts.reserve || {};
+  const need = {};
+
+  for (const slot of slots) {
+    const dish = dishes[slot.recipeId];
+    if (!dish) continue;
+    const scaled = scaleIngredients(dish, slot.servings || dish.servings);
+    for (const ing of scaled) {
+      need[ing.id] = (need[ing.id] || 0) + ing.amount;
+    }
+  }
+
+  const lines = [];
+  let total = 0;
+
+  for (const [id, qty] of Object.entries(need)) {
+    const product = products[id];
+    if (!product) continue;
+    const have = Math.max(0, (inventory[id] || 0) - (reserve[id] || 0));
+    let buy = Math.max(0, qty - have);
+    if (buy <= 0) {
+      lines.push({
+        id,
+        name: product.name,
+        need: qty,
+        have,
+        buy: 0,
+        store: product.store,
+        cost: 0,
+        covered: true,
+        unit: product.unit,
+      });
+      continue;
+    }
+    // округление до удобной фасовки
+    buy = packRound(product, buy);
+    const cost = buy * product.price;
+    total += cost;
+    lines.push({
+      id,
+      name: product.name,
+      need: qty,
+      have,
+      buy,
+      store: product.store,
+      cost,
+      covered: false,
+      unit: product.unit,
+      note: buy > qty - have + 1 ? "Округлили до удобной фасовки" : "",
+    });
+  }
+
+  lines.sort((a, b) => a.store.localeCompare(b.store) || a.name.localeCompare(b.name));
+
+  const byStore = {};
+  for (const line of lines) {
+    if (line.covered) continue;
+    byStore[line.store] = byStore[line.store] || { lines: [], total: 0 };
+    byStore[line.store].lines.push(line);
+    byStore[line.store].total += line.cost;
+  }
+
+  return { lines, byStore, total, needCount: Object.keys(need).length };
+}
+
+function packRound(product, buy) {
+  if (product.unit === "pcs") return Math.ceil(buy);
+  if (["oil", "milk", "kefir"].includes(product.id)) return Math.ceil(buy / 100) * 100;
+  if (product.store === "parnoe" || product.price >= 0.3) {
+    // мясо/дорогое — до 50 г
+    return Math.ceil(buy / 50) * 50;
+  }
+  if (buy < 100) return Math.ceil(buy / 10) * 10;
+  return Math.ceil(buy / 100) * 100;
+}
+
+/**
+ * Авточерновик на 7 дней из каталожного menu (неделя weekNum 1–12)
+ * + лёгкая подстройка под дизлайки
+ */
+export function draftWeekPlan(data, settings, weekNum = 1) {
+  const days = data.menu.filter((m) => m.week === weekNum);
+  const dishes = Object.fromEntries(data.dishes.map((d) => [d.id, d]));
+  const plan = days.map((day) => {
+    const pick = (id) => {
+      if (!settings.disliked?.includes(id)) return id;
+      const dish = dishes[id];
+      if (!dish) return id;
+      const alt = data.dishes.find(
+        (d) => d.type === dish.type && d.id !== id && !settings.disliked.includes(d.id)
+      );
+      return alt?.id || id;
+    };
+    return {
+      week: day.week,
+      day: day.day,
+      dayName: day.dayName,
+      label: day.label,
+      cookHint: day.cookHint,
+      breakfast: pick(day.breakfast),
+      lunch: pick(day.lunch),
+      dinner: pick(day.dinner),
+      snacks: day.snacks.map(pick),
+      status: { breakfast: "planned", lunch: "planned", dinner: "planned" },
+    };
+  });
+  return plan;
+}
+
+/** Оценка стоимости плана (по costPerServing * условные порции семьи) */
+export function estimatePlanCost(plan, dishes) {
+  let sum = 0;
+  for (const day of plan) {
+    for (const key of ["breakfast", "lunch", "dinner"]) {
+      const d = dishes[day[key]];
+      if (d) sum += (d.costPerServing || 0) * 3; // грубо на семью
+    }
+    for (const sid of day.snacks || []) {
+      const d = dishes[sid];
+      if (d) sum += d.costPerServing || 0;
+    }
+  }
+  return Math.round(sum);
+}
+
+export function todayKey() {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+}
+
+/** День плана: по умолчанию день недели от понедельника = индекс в текущем плане */
+export function planDayIndex(plan) {
+  if (!plan?.length) return 0;
+  const js = new Date().getDay(); // 0 Sun
+  const monBased = js === 0 ? 6 : js - 1;
+  return Math.min(monBased, plan.length - 1);
+}
+
+export function slotsFromPlan(plan, dishes, days = null) {
+  const use = days ? plan.filter((_, i) => days.includes(i)) : plan;
+  const slots = [];
+  for (const day of use) {
+    for (const key of ["breakfast", "lunch", "dinner"]) {
+      const id = day[key];
+      const d = dishes[id];
+      if (d) slots.push({ recipeId: id, servings: d.servings, meal: key, label: day.label });
+    }
+  }
+  return slots;
+}
+
+export function basketToText(basket, stores) {
+  const lines = ["Корзина семейного меню", ""];
+  for (const [storeId, group] of Object.entries(basket.byStore)) {
+    lines.push(`— ${storeName(stores, storeId)} (~${Math.round(group.total)} ₽)`);
+    for (const l of group.lines) {
+      const unit = l.unit === "pcs" ? "шт" : l.unit === "ml" ? "мл" : "г";
+      lines.push(`  • ${l.name}: ${l.buy} ${unit}`);
+    }
+    lines.push("");
+  }
+  lines.push(`Итого докупить: ~${Math.round(basket.total)} ₽`);
+  return lines.join("\n");
+}

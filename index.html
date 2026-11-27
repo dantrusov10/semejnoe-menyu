@@ -1,406 +1,60 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Семейное меню — 3 месяца</title>
-<style>
-:root {
-  --bg: #f3efe6;
-  --ink: #1c1914;
-  --muted: #5c564c;
-  --card: #fffdf8;
-  --line: #ddd4c4;
-  --accent: #2f5d50;
-  --accent2: #b85c38;
-  --chip: #e7efeB;
-  --warn: #8a4b1f;
-  --ok: #1f6b4a;
-  --shadow: 0 10px 30px rgba(28,25,20,.08);
-  --radius: 16px;
-  --font: "Segoe UI", "Trebuchet MS", system-ui, sans-serif;
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0; font-family: var(--font); color: var(--ink);
-  background:
-    radial-gradient(1000px 500px at 10% -10%, #e7f0ea 0%, transparent 50%),
-    radial-gradient(800px 400px at 100% 0%, #f7e7dc 0%, transparent 45%),
-    var(--bg);
-  line-height: 1.45;
-}
-header {
-  padding: 28px 20px 10px; max-width: 1100px; margin: 0 auto;
-}
-header h1 { margin: 0 0 6px; font-size: 1.75rem; letter-spacing: -.02em; }
-header p { margin: 0; color: var(--muted); max-width: 60ch; }
-.wrap { max-width: 1100px; margin: 0 auto; padding: 12px 20px 60px; }
-.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
-.tabs button {
-  border: 1px solid var(--line); background: var(--card); color: var(--ink);
-  padding: 10px 14px; border-radius: 999px; cursor: pointer; font-weight: 600;
-}
-.tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-.panel { display: none; }
-.panel.active { display: block; }
-.grid { display: grid; gap: 12px; }
-.cards { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
-.card {
-  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 14px 16px; box-shadow: var(--shadow);
-}
-.card h3 { margin: 0 0 6px; font-size: 1.05rem; }
-.meta { color: var(--muted); font-size: .86rem; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.chip { background: var(--chip); color: var(--accent); font-size: .75rem; padding: 3px 8px; border-radius: 999px; }
-.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 12px 0; }
-label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--muted); }
-select, input, textarea {
-  font: inherit; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
-  background: #fff; min-width: 140px; color: var(--ink);
-}
-button.act {
-  background: var(--accent2); color: #fff; border: 0; border-radius: 12px;
-  padding: 10px 16px; font-weight: 700; cursor: pointer;
-}
-button.ghost { background: transparent; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; cursor: pointer; }
-.budget {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 14px 0 8px;
-}
-.budget .card { padding: 12px; }
-.budget strong { display: block; font-size: 1.2rem; margin-top: 4px; }
-.day-meals { display: grid; gap: 8px; margin-top: 8px; }
-.meal {
-  display: grid; grid-template-columns: 72px 1fr auto; gap: 8px; align-items: center;
-  padding: 8px 10px; border-radius: 12px; background: #f7f3eb; cursor: pointer;
-}
-.meal:hover { background: #efe8da; }
-.meal b { font-size: .78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-.price { font-weight: 700; color: var(--ok); white-space: nowrap; }
-.recipe-layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; }
-@media (max-width: 800px) { .recipe-layout { grid-template-columns: 1fr; } .meal { grid-template-columns: 64px 1fr; } .meal .price { grid-column: 2; } }
-.list { max-height: 70vh; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); }
-.list button {
-  display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line);
-  background: transparent; padding: 10px 12px; cursor: pointer;
-}
-.list button.active, .list button:hover { background: var(--chip); }
-.ing-table { width: 100%; border-collapse: collapse; font-size: .92rem; }
-.ing-table th, .ing-table td { border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: left; }
-.steps { padding-left: 18px; }
-.steps li { margin: 6px 0; }
-.note { background: #fff6e8; border-left: 3px solid var(--warn); padding: 10px 12px; border-radius: 8px; margin: 12px 0; }
-.okbox { background: #eaf6f0; border-left: 3px solid var(--ok); padding: 10px 12px; border-radius: 8px; }
-.inv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
-.inv-item { display: grid; grid-template-columns: 1fr 88px; gap: 6px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px; }
-.muted { color: var(--muted); }
-.footer-note { margin-top: 24px; font-size: .85rem; color: var(--muted); }
-.search { flex: 1; min-width: 200px; }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#234e3a" />
+  <title>Семейная кухня</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,650&family=Manrope:wght@500;650;750&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="app/css/app.css" />
 </head>
-<body>
-<header>
-  <h1>Семейное меню на 3 месяца</h1>
-  <p>Домашняя еда без ВкусВилл · batch 2–7 дней · Ашан + Пятёрочка + Парное мясо (Молоково). Семья из трёх, Богданиха.</p>
-</header>
-<div class="wrap">
-  <div class="budget" id="budgetCards"></div>
-  <div class="tabs" id="tabs">
-    <button data-tab="menu" class="active">Меню 12 недель</button>
-    <button data-tab="recipes">Каталог рецептов</button>
-    <button data-tab="inventory">Что есть → что готовить</button>
-    <button data-tab="shop">Закупка / прайс</button>
+<body class="profile-kitchen">
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <h1>Семейная кухня</h1>
+        <p>Запасы → меню → корзина → готовка → деньги. Богданиха · Ашан · Пятёрочка · Парное мясо.</p>
+      </div>
+      <div class="profile-switch" role="group" aria-label="Профиль">
+        <button type="button" data-profile="kitchen" class="active">Кухня</button>
+        <button type="button" data-profile="command">Командный</button>
+      </div>
+    </header>
+
+    <nav class="nav" aria-label="Разделы">
+      <button type="button" data-screen="today" class="active">Сегодня</button>
+      <button type="button" data-screen="plan">План</button>
+      <button type="button" data-screen="inventory">Запасы</button>
+      <button type="button" data-screen="basket">Корзина</button>
+      <button type="button" data-screen="recipes">Рецепты</button>
+      <button type="button" data-screen="budget" data-cmd-only>Бюджет</button>
+      <button type="button" data-screen="family" data-cmd-only>Семья</button>
+    </nav>
+
+    <main>
+      <section class="panel active" id="screen-today"></section>
+      <section class="panel" id="screen-plan"></section>
+      <section class="panel" id="screen-inventory"></section>
+      <section class="panel" id="screen-basket"></section>
+      <section class="panel" id="screen-recipes"></section>
+      <section class="panel" id="screen-budget"></section>
+      <section class="panel" id="screen-family"></section>
+    </main>
+
+    <p class="footer-hint">Данные хранятся в браузере (IndexedDB). Экспорт — в разделе «Семья».</p>
   </div>
 
-  <section class="panel active" id="tab-menu">
-    <div class="row">
-      <label>Неделя
-        <select id="weekSelect"></select>
-      </label>
-      <label class="search">Поиск по блюдам дня
-        <input id="menuSearch" placeholder="например: суп, минтай, сырники" />
-      </label>
+  <div class="modal" id="modal">
+    <div class="card modal-card">
+      <button type="button" class="btn btn-ghost" id="modal-close" style="position:absolute;right:12px;top:12px">Закрыть</button>
+      <div id="modal-body"></div>
     </div>
-    <div class="grid cards" id="menuGrid"></div>
-  </section>
-
-  <section class="panel" id="tab-recipes">
-    <div class="row">
-      <label>Тип
-        <select id="typeFilter">
-          <option value="all">Все</option>
-          <option value="breakfast">Завтраки</option>
-          <option value="soup">Супы</option>
-          <option value="main">Основные</option>
-          <option value="snack">Перекусы</option>
-        </select>
-      </label>
-      <label class="search">Поиск
-        <input id="recipeSearch" placeholder="название или продукт" />
-      </label>
-    </div>
-    <div class="recipe-layout">
-      <div class="list" id="recipeList"></div>
-      <div class="card" id="recipeView"><p class="muted">Выберите блюдо слева</p></div>
-    </div>
-  </section>
-
-  <section class="panel" id="tab-inventory">
-    <p class="meta">Отметьте продукты и количество (г / мл / шт как в прайсе). Покажем блюда, на которые хватает, и сколько порций по самому узкому ингредиенту.</p>
-    <div class="row">
-      <button class="act" id="calcInv">Показать блюда</button>
-      <button class="ghost" id="clearInv">Сбросить</button>
-      <label>Только если хватает на ≥
-        <input type="number" id="minServ" value="2" min="1" style="width:80px" /> порций
-      </label>
-    </div>
-    <div class="inv-grid" id="invGrid"></div>
-    <div class="grid cards" id="invResults" style="margin-top:16px"></div>
-  </section>
-
-  <section class="panel" id="tab-shop">
-    <div class="card">
-      <h3>Где что брать</h3>
-      <ul>
-        <li><b>Парное мясо</b> — мясо, птица, печень, филе рыбы; самовывоз Молоково. <a href="https://parnoemjaso.ru/" target="_blank" rel="noopener">parnoemjaso.ru</a></li>
-        <li><b>Ашан</b> — крупы, овощи, молочка, яйца, дешёвая курица/фарш, фрукты.</li>
-        <li><b>Пятёрочка</b> — раз в неделю вкусняшки (фуэт, сыры, чипсы) + добор.</li>
-      </ul>
-      <p class="meta">Цены — ориентиры для планирования, сверяйте с полкой/сайтом. Алкоголь в меню готовки не входит.</p>
-    </div>
-    <div class="row">
-      <label>Магазин
-        <select id="storeFilter">
-          <option value="all">Все</option>
-          <option value="parnoe">Парное мясо</option>
-          <option value="ashan">Ашан</option>
-          <option value="pyat">Пятёрочка</option>
-        </select>
-      </label>
-      <label class="search">Поиск продукта
-        <input id="prodSearch" placeholder="гречка, фарш…" />
-      </label>
-    </div>
-    <div class="card" style="overflow:auto">
-      <table class="ing-table" id="priceTable"></table>
-    </div>
-  </section>
-
-  <p class="footer-note">Данные: <code>data/app-data.js</code>. Пересборка: <code>node tools/build.mjs</code>. Это старт: дальше можно уточнять цены по вашим чекам и расширять рецепты.</p>
-</div>
-
-<div id="modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); padding:20px; z-index:50; overflow:auto">
-  <div class="card" style="max-width:720px; margin:40px auto; position:relative">
-    <button class="ghost" id="closeModal" style="position:absolute; right:12px; top:12px">Закрыть</button>
-    <div id="modalBody"></div>
   </div>
-</div>
+  <div class="toast" id="toast" role="status"></div>
 
-<script src="data/app-data.js"></script>
-<script>
-const DATA = window.APP_DATA;
-const dishById = Object.fromEntries(DATA.dishes.map(d => [d.id, d]));
-const prodById = Object.fromEntries(DATA.products.map(p => [p.id, p]));
-const storeName = id => DATA.stores[id]?.name || id;
-
-function rub(n){ return Math.round(n).toLocaleString("ru-RU") + " ₽"; }
-function amountLabel(p, amount){
-  if (!p) return amount;
-  if (p.unit === "pcs") return amount + " шт";
-  if (p.unit === "ml") return amount + " мл";
-  return amount + " г";
-}
-
-document.getElementById("budgetCards").innerHTML = `
-  <div class="card"><span class="meta">Готовка / мес</span><strong>${rub(DATA.budget.cookingTarget)}</strong></div>
-  <div class="card"><span class="meta">Вино</span><strong>${rub(DATA.budget.wine)}</strong></div>
-  <div class="card"><span class="meta">Джин (потолок)</span><strong>${rub(DATA.budget.ginMax)}</strong></div>
-  <div class="card"><span class="meta">Вкусняшки</span><strong>${rub(DATA.budget.treatsMonthly)}</strong></div>
-  <div class="card"><span class="meta">Полный ориентир</span><strong>${DATA.budget.totalBand}</strong></div>
-`;
-
-document.querySelectorAll(".tabs button").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
-    btn.classList.add("active");
-    document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
-  });
-});
-
-const weekSelect = document.getElementById("weekSelect");
-for (let w=1; w<=12; w++){
-  const o = document.createElement("option");
-  o.value = w; o.textContent = "Неделя " + w;
-  weekSelect.appendChild(o);
-}
-
-function renderMenu(){
-  const week = +weekSelect.value;
-  const q = (document.getElementById("menuSearch").value || "").trim().toLowerCase();
-  const days = DATA.menu.filter(m => m.week === week);
-  const grid = document.getElementById("menuGrid");
-  grid.innerHTML = "";
-  days.forEach(day => {
-    const meals = [
-      ["Завтрак", day.breakfast],
-      ["Обед", day.lunch],
-      ["Ужин", day.dinner],
-      ["Перекус", day.snacks[0]],
-      ["Перекус 2", day.snacks[1]],
-    ];
-    const blob = meals.map(([_, id]) => dishById[id]?.name || "").join(" ").toLowerCase();
-    if (q && !blob.includes(q) && !day.label.toLowerCase().includes(q)) return;
-    const el = document.createElement("div");
-    el.className = "card";
-    el.innerHTML = `<h3>${day.label}</h3><div class="meta">${day.cookHint}</div><div class="day-meals"></div>`;
-    const box = el.querySelector(".day-meals");
-    meals.forEach(([label, id]) => {
-      const d = dishById[id];
-      if (!d) return;
-      const row = document.createElement("div");
-      row.className = "meal";
-      row.innerHTML = `<b>${label}</b><span>${d.name}</span><span class="price">~${rub(d.costPerServing)}/порц</span>`;
-      row.onclick = () => openDish(d.id);
-      box.appendChild(row);
-    });
-    const dayCost = meals.reduce((s, [_, id]) => s + (dishById[id]?.costPerServing || 0) * (id.startsWith("k") ? 1 : 2), 0);
-    const foot = document.createElement("div");
-    foot.className = "meta";
-    foot.style.marginTop = "8px";
-    foot.textContent = "Ориентир дня на семью (грубо): ~" + rub(dayCost);
-    el.appendChild(foot);
-    grid.appendChild(el);
-  });
-}
-weekSelect.addEventListener("change", renderMenu);
-document.getElementById("menuSearch").addEventListener("input", renderMenu);
-
-function dishHtml(d){
-  const stores = d.stores.map(storeName).join(", ");
-  const rows = d.ingredients.map(i => {
-    const p = prodById[i.id];
-    const line = (p?.price || 0) * i.amount;
-    return `<tr><td>${p?.name || i.id}</td><td>${amountLabel(p, i.amount)}</td><td>${storeName(p?.store)}</td><td>${rub(line)}</td></tr>`;
-  }).join("");
-  return `
-    <h2 style="margin:0 0 8px">${d.name}</h2>
-    <div class="chips">
-      <span class="chip">${d.type}</span>
-      <span class="chip">batch ${d.batchDays} дн</span>
-      <span class="chip">${d.servings} порц</span>
-      <span class="chip">~${d.timeMin} мин</span>
-      <span class="chip">партия ${rub(d.costBatch)}</span>
-    </div>
-    <p class="meta">Где купить: ${stores || "—"}</p>
-    <div class="note"><b>Дочка:</b> ${d.child}</div>
-    <h3>Ингредиенты (на партию)</h3>
-    <table class="ing-table"><thead><tr><th>Продукт</th><th>Кол-во</th><th>Магазин</th><th>₽</th></tr></thead><tbody>${rows}</tbody></table>
-    <h3>Как готовить</h3>
-    <ol class="steps">${d.steps.map(s => "<li>"+s+"</li>").join("")}</ol>
-    <div class="okbox">На 1 порцию ориентир: <b>${rub(d.costPerServing)}</b>. Партия рассчитана на разогрев ${d.batchDays} дн.</div>
-  `;
-}
-
-function openDish(id){
-  const d = dishById[id];
-  if (!d) return;
-  document.getElementById("modalBody").innerHTML = dishHtml(d);
-  document.getElementById("modal").style.display = "block";
-  // sync recipe tab selection
-  selectedRecipe = id;
-  renderRecipeList();
-  document.getElementById("recipeView").innerHTML = dishHtml(d);
-}
-document.getElementById("closeModal").onclick = () => document.getElementById("modal").style.display = "none";
-document.getElementById("modal").addEventListener("click", e => { if (e.target.id === "modal") e.target.style.display = "none"; });
-
-let selectedRecipe = DATA.dishes[0]?.id;
-function renderRecipeList(){
-  const type = document.getElementById("typeFilter").value;
-  const q = (document.getElementById("recipeSearch").value || "").toLowerCase();
-  const list = document.getElementById("recipeList");
-  list.innerHTML = "";
-  DATA.dishes.filter(d => {
-    if (type !== "all" && d.type !== type) return false;
-    if (!q) return true;
-    const names = d.ingredients.map(i => prodById[i.id]?.name || "").join(" ");
-    return (d.name + " " + names).toLowerCase().includes(q);
-  }).forEach(d => {
-    const b = document.createElement("button");
-    b.textContent = d.name + " · " + rub(d.costBatch);
-    if (d.id === selectedRecipe) b.classList.add("active");
-    b.onclick = () => { selectedRecipe = d.id; document.getElementById("recipeView").innerHTML = dishHtml(d); renderRecipeList(); };
-    list.appendChild(b);
-  });
-}
-document.getElementById("typeFilter").addEventListener("change", renderRecipeList);
-document.getElementById("recipeSearch").addEventListener("input", renderRecipeList);
-
-function renderInvGrid(){
-  const grid = document.getElementById("invGrid");
-  grid.innerHTML = "";
-  DATA.products.forEach(p => {
-    const el = document.createElement("label");
-    el.className = "inv-item";
-    el.innerHTML = `<span>${p.name}<br><span class="meta">${storeName(p.store)} · ${p.unit}</span></span>`;
-    const input = document.createElement("input");
-    input.type = "number"; input.min = "0"; input.placeholder = "0"; input.dataset.pid = p.id;
-    el.appendChild(input);
-    grid.appendChild(el);
-  });
-}
-function calcInventory(){
-  const have = {};
-  document.querySelectorAll("#invGrid input").forEach(inp => {
-    const v = parseFloat(inp.value);
-    if (v > 0) have[inp.dataset.pid] = v;
-  });
-  const minServ = +document.getElementById("minServ").value || 1;
-  const results = [];
-  DATA.dishes.forEach(d => {
-    if (!d.ingredients.length) return;
-    let portions = Infinity;
-    let ok = true;
-    for (const ing of d.ingredients) {
-      const haveAmt = have[ing.id] || 0;
-      if (haveAmt <= 0) { ok = false; break; }
-      const perServing = ing.amount / d.servings;
-      portions = Math.min(portions, haveAmt / perServing);
-    }
-    portions = Math.floor(portions * 10) / 10;
-    if (ok && portions >= minServ) results.push({ d, portions });
-  });
-  results.sort((a,b) => b.portions - a.portions);
-  const box = document.getElementById("invResults");
-  box.innerHTML = results.length ? "" : "<div class='card muted'>Пока ни на одно блюдо не хватает. Введите запасы выше.</div>";
-  results.slice(0, 40).forEach(({d, portions}) => {
-    const el = document.createElement("div");
-    el.className = "card";
-    el.innerHTML = `<h3>${d.name}</h3><div class="meta">Хватит примерно на <b>${portions}</b> порц. · партия обычно ${d.servings}</div>`;
-    el.onclick = () => openDish(d.id);
-    el.style.cursor = "pointer";
-    box.appendChild(el);
-  });
-}
-document.getElementById("calcInv").onclick = calcInventory;
-document.getElementById("clearInv").onclick = () => { document.querySelectorAll("#invGrid input").forEach(i => i.value=""); document.getElementById("invResults").innerHTML=""; };
-
-function renderPrices(){
-  const store = document.getElementById("storeFilter").value;
-  const q = (document.getElementById("prodSearch").value || "").toLowerCase();
-  const rows = DATA.products.filter(p => (store==="all"||p.store===store) && p.name.toLowerCase().includes(q));
-  document.getElementById("priceTable").innerHTML = "<thead><tr><th>Продукт</th><th>Магазин</th><th>Цена</th><th>Ед.</th></tr></thead><tbody>" +
-    rows.map(p => `<tr><td>${p.name}</td><td>${storeName(p.store)}</td><td>${p.price} ₽/${p.unit==="pcs"?"шт":p.unit}</td><td>${p.unit}</td></tr>`).join("") + "</tbody>";
-}
-document.getElementById("storeFilter").addEventListener("change", renderPrices);
-document.getElementById("prodSearch").addEventListener("input", renderPrices);
-
-renderMenu();
-renderRecipeList();
-if (selectedRecipe) document.getElementById("recipeView").innerHTML = dishHtml(dishById[selectedRecipe]);
-renderInvGrid();
-renderPrices();
-</script>
+  <script src="data/app-data.js"></script>
+  <script type="module" src="app/js/app.js"></script>
 </body>
 </html>
