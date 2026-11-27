@@ -285,10 +285,61 @@ export function slotsFromPlan(plan, dishes, days = null) {
     for (const key of ["breakfast", "lunch", "dinner"]) {
       const id = day[key];
       const d = dishes[id];
-      if (d) slots.push({ recipeId: id, servings: d.servings, meal: key, label: day.label });
+      if (!d) continue;
+      const meta = day.meta?.[key];
+      // порции на день: если batch на N дней — делим партийные servings на дни, иначе meta.servings / base
+      const servings = meta?.servingsPerDay || meta?.servings || d.servings;
+      slots.push({
+        recipeId: id,
+        servings,
+        meal: key,
+        label: day.label,
+        people: meta?.people,
+        batchDays: meta?.batchDays,
+      });
     }
   }
   return slots;
+}
+
+/** Поставить блюдо в план на несколько дней подряд */
+export function placeRecipeInPlan(plan, opts) {
+  const {
+    recipeId,
+    meal = "dinner",
+    startIndex = 0,
+    days = 1,
+    people = 3,
+    servings = null,
+    dishBaseServings = 6,
+  } = opts;
+  const totalServings = servings || people * Math.max(1, days);
+  const servingsPerDay = Math.max(1, Math.round(totalServings / Math.max(1, days)));
+  const next = plan.map((d) => ({ ...d, meta: { ...(d.meta || {}) } }));
+  for (let i = 0; i < days; i++) {
+    const idx = startIndex + i;
+    if (idx >= next.length) break;
+    next[idx] = {
+      ...next[idx],
+      [meal]: recipeId,
+      meta: {
+        ...(next[idx].meta || {}),
+        [meal]: {
+          people,
+          servings: totalServings,
+          servingsPerDay,
+          batchDays: days,
+          dishBaseServings,
+          placedAt: new Date().toISOString(),
+        },
+      },
+      cookHint:
+        i === 0
+          ? `Новая варка: ${meal}, ~${totalServings} порц на ${days} дн.`
+          : `Разогрев (${i + 1}/${days})`,
+    };
+  }
+  return next;
 }
 
 export function basketToText(basket, stores) {

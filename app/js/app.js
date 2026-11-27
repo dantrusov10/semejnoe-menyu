@@ -18,6 +18,8 @@ import {
   planDayIndex,
   slotsFromPlan,
   basketToText,
+  scaleIngredients,
+  placeRecipeInPlan,
 } from "./engine.js";
 import {
   pullCloud,
@@ -56,13 +58,16 @@ const state = {
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-let recipeModal;
-let toastObj;
 let fuse;
+let toastTimer;
 
 function toast(msg) {
-  $("#toastBody").textContent = msg;
-  toastObj.show();
+  const el = $("#toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2800);
 }
 
 async function persistLocal() {
@@ -109,13 +114,14 @@ function dish(id) {
 
 function updateSyncBadge() {
   const el = $("#sync-badge");
+  if (!el) return;
   if (state.syncError) {
     el.textContent = "офлайн";
-    el.className = "badge text-bg-warning";
+    el.className = "sk-pill";
     return;
   }
   el.textContent = state.syncAt ? `облако ${dayjs(state.syncAt).format("HH:mm")}` : "облако";
-  el.className = "badge text-bg-light text-success";
+  el.className = "sk-pill ok";
 }
 
 async function syncPull(preferCloud = true) {
@@ -161,9 +167,7 @@ function applyProfile() {
 function setScreen(name) {
   state.screen = name;
   $$("#nav-list [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
-  $$(".screen").forEach((p) => p.classList.toggle("d-none", p.id !== `screen-${name}`));
-  const collapse = bootstrap.Collapse.getInstance($("#mainNav"));
-  if (collapse && window.innerWidth < 992) collapse.hide();
+  $$(".sk-panel").forEach((p) => p.classList.toggle("active", p.id === `screen-${name}`));
   renderScreen();
 }
 
@@ -187,7 +191,7 @@ function renderToday() {
   const day = state.plan[idx];
   const root = $("#screen-today");
   if (!day) {
-    root.innerHTML = `<div class="alert alert-warning">Плана нет — откройте «План».</div>`;
+    root.innerHTML = `<div class="sk-note">Плана нет — откройте «План» или добавьте блюдо из «Рецепты».</div>`;
     return;
   }
   const meals = [
@@ -198,44 +202,35 @@ function renderToday() {
     ["Перекус 2", "snack", day.snacks?.[1]],
   ];
   root.innerHTML = `
-    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
-      <div>
-        <h1 class="h3 mb-1">${day.dayName}: меню дня</h1>
-        <p class="text-secondary mb-0">${day.cookHint || ""}</p>
+    <div class="sk-hero">
+      <div class="sk-chip-row">
+        <span class="sk-tag hot">Неделя ${state.weekNum}</span>
+        <span class="sk-tag">${day.dayName} · день ${idx + 1}/7</span>
       </div>
-      <div class="d-flex flex-wrap gap-2">
-        <span class="badge text-bg-success-subtle text-success border">Неделя ${state.weekNum}</span>
-        <span class="badge text-bg-secondary-subtle text-secondary border">День ${idx + 1}/7</span>
-      </div>
+      <h1>${day.dayName}: что едим</h1>
+      <p>${day.cookHint || "Откройте блюдо или добавьте своё из раздела Рецепты."}</p>
     </div>
-    <div class="row g-2 g-md-3" id="today-meals"></div>
-    <div class="d-grid d-sm-flex gap-2 mt-3">
-      <button class="btn btn-success btn-lg" id="btn-cook-dinner"><i class="bi bi-fire me-1"></i>Готовлю ужин</button>
-      <button class="btn btn-outline-secondary btn-lg" id="btn-swap-dinner">Заменить ужин</button>
-      <button class="btn btn-outline-success btn-lg" id="btn-from-inv">Из запасов</button>
+    <div class="sk-grid" id="today-meals"></div>
+    <div class="sk-row" style="margin-top:16px">
+      <button class="sk-btn sk-btn-accent" id="btn-cook-dinner">Готовлю ужин</button>
+      <button class="sk-btn sk-btn-ghost" id="btn-swap-dinner">Заменить ужин</button>
+      <button class="sk-btn sk-btn-ghost" id="btn-add-recipe">Добавить блюдо в план</button>
+      <button class="sk-btn sk-btn-ghost" id="btn-from-inv">Из запасов</button>
     </div>`;
   const box = $("#today-meals");
-  meals.forEach(([label, , id]) => {
+  meals.forEach(([label, mealKey, id]) => {
     const d = dish(id);
     if (!d) return;
+    const meta = day.meta?.[mealKey];
     const col = document.createElement("div");
-    col.className = "col-12 col-md-6 col-xl-4";
-    col.innerHTML = `
-      <div class="card meal-tile h-100 shadow-sm border-0">
-        <div class="card-body d-flex justify-content-between align-items-center gap-2">
-          <div>
-            <div class="text-uppercase text-secondary small fw-semibold">${label}</div>
-            <div class="fw-semibold">${d.name}</div>
-            <div class="small text-secondary">${d.timeMin} мин · batch ${d.batchDays} дн · ${d.category}</div>
-          </div>
-          <div class="text-success fw-bold text-nowrap">~${rub(d.costPerServing)}</div>
-        </div>
-      </div>`;
-    col.querySelector(".meal-tile").onclick = () => openRecipe(id);
+    col.className = "sk-col-4";
+    col.innerHTML = `<div class="sk-meal"><b>${label}</b><div><div style="font-weight:750">${d.name}</div><div class="sk-meta">${d.timeMin} мин · ${d.category}${meta ? ` · ${meta.people || "?"} чел · ${meta.batchDays || 1} дн` : ` · batch ${d.batchDays} дн`}</div></div><div class="price">~${rub(d.costPerServing)}</div></div>`;
+    col.querySelector(".sk-meal").onclick = () => openRecipe(id);
     box.appendChild(col);
   });
   $("#btn-cook-dinner").onclick = () => openRecipe(day.dinner);
   $("#btn-swap-dinner").onclick = () => swapMeal(idx, "dinner");
+  $("#btn-add-recipe").onclick = () => setScreen("recipes");
   $("#btn-from-inv").onclick = () => setScreen("inventory");
 }
 
@@ -259,22 +254,22 @@ function renderPlan() {
   const root = $("#screen-plan");
   const cost = estimatePlanCost(state.plan, state.cat.dishes);
   root.innerHTML = `
-    <div class="row g-3 align-items-end mb-3">
-      <div class="col-6 col-md-3">
-        <label class="form-label">Неделя шаблона</label>
-        <select class="form-select form-select-lg" id="week-select">
+    <div class="sk-hero">
+      <h1>План недели</h1>
+      <p>Авточерновик или ручная сборка из рецептов: порции, люди, на сколько дней.</p>
+    </div>
+    <div class="sk-row">
+      <label class="sk-field">Неделя шаблона
+        <select class="sk-select" id="week-select">
           ${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${state.weekNum === i + 1 ? "selected" : ""}>${i + 1}</option>`).join("")}
         </select>
-      </div>
-      <div class="col-12 col-md-auto d-grid d-md-flex gap-2">
-        <button class="btn btn-success" id="gen-week"><i class="bi bi-magic me-1"></i>Авточерновик</button>
-        <button class="btn btn-outline-success" id="to-basket-week">В корзину</button>
-      </div>
-      <div class="col-md-auto ms-md-auto">
-        <div class="card border-0 shadow-sm"><div class="card-body py-2 px-3">Ориентир недели: <strong>${rub(cost)}</strong></div></div>
-      </div>
+      </label>
+      <button class="sk-btn sk-btn-primary" id="gen-week">Авточерновик</button>
+      <button class="sk-btn sk-btn-ghost" id="to-basket-week">В корзину</button>
+      <button class="sk-btn sk-btn-accent" id="to-recipes">Добавить блюдо</button>
+      <div class="sk-card" style="padding:10px 14px"><span class="sk-meta">Ориентир недели</span><div class="sk-kpi" style="font-size:1.25rem">${rub(cost)}</div></div>
     </div>
-    <div class="row g-3" id="plan-grid"></div>`;
+    <div class="sk-grid" id="plan-grid"></div>`;
   $("#week-select").onchange = (e) => (state.weekNum = +e.target.value);
   $("#gen-week").onclick = async () => {
     state.plan = draftWeekPlan(state.data, state.settings, state.weekNum);
@@ -283,26 +278,28 @@ function renderPlan() {
     renderPlan();
   };
   $("#to-basket-week").onclick = () => setScreen("basket");
+  $("#to-recipes").onclick = () => setScreen("recipes");
   const grid = $("#plan-grid");
   state.plan.forEach((day, idx) => {
     const col = document.createElement("div");
-    col.className = "col-12 col-lg-6 col-xxl-4";
+    col.className = "sk-col-4";
     const today = idx === planDayIndex(state.plan);
-    col.innerHTML = `<div class="card h-100 shadow-sm border-0 ${today ? "border border-success" : ""}"><div class="card-body"></div></div>`;
-    const body = col.querySelector(".card-body");
-    body.innerHTML = `<div class="d-flex justify-content-between"><h2 class="h5 mb-1">${day.dayName}${today ? " · сегодня" : ""}</h2><button class="btn btn-sm btn-outline-secondary" data-swap>Не хочу ужин</button></div><p class="small text-secondary">${day.cookHint || ""}</p>`;
+    col.innerHTML = `<div class="sk-card ${today ? "tone" : ""}"><div class="sk-row" style="margin:0 0 8px;justify-content:space-between;align-items:center"><h2 style="margin:0;font-size:1.15rem">${day.dayName}${today ? " · сегодня" : ""}</h2><button class="sk-btn sk-btn-ghost" data-swap style="min-height:40px">Не хочу ужин</button></div><p class="sk-meta">${day.cookHint || ""}</p><div data-meals></div></div>`;
+    const mealsBox = col.querySelector("[data-meals]");
     ["breakfast", "lunch", "dinner"].forEach((key) => {
       const d = dish(day[key]);
       if (!d) return;
       const labels = { breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин" };
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "btn btn-light w-100 text-start mb-2 meal-tile";
-      row.innerHTML = `<span class="badge text-bg-secondary me-2">${labels[key]}</span>${d.name}<span class="float-end text-success small">${d.batchDays}д</span>`;
+      const meta = day.meta?.[key];
+      const row = document.createElement("div");
+      row.className = "sk-meal";
+      row.style.marginTop = "8px";
+      row.innerHTML = `<b>${labels[key]}</b><div><div style="font-weight:750">${d.name}</div><div class="sk-meta">${meta ? `${meta.people || "?"} чел · ${meta.batchDays || 1} дн · ${meta.servings || "?"} порц` : `${d.batchDays} дн`}</div></div><div class="price">${meta?.batchDays ? "batch" : d.batchDays + "д"}</div>`;
       row.onclick = () => openRecipe(d.id);
-      body.appendChild(row);
+      mealsBox.appendChild(row);
     });
-    body.querySelector("[data-swap]").onclick = async () => {
+    col.querySelector("[data-swap]").onclick = async (e) => {
+      e.stopPropagation();
       if (!state.settings.disliked.includes(day.dinner)) state.settings.disliked.push(day.dinner);
       await swapMeal(idx, "dinner");
       await persistLocal();
@@ -336,7 +333,7 @@ function renderInventory() {
     <div class="card border-0 shadow-sm mb-3">
       <div class="card-body">
         <h1 class="h3">Запасы <span class="fs-6 text-secondary fw-normal">(общие для семьи)</span></h1>
-        <p class="text-secondary">Изменения уходят в облако gist — на другом телефоне появятся после синка / обновления.</p>
+        <p class="sk-meta">Изменения сами уходят в облако — на другом телефоне подтянутся.</p>
         <div class="d-flex flex-wrap gap-2 mb-3" id="quick"></div>
         <div class="row g-2 align-items-end">
           <div class="col-6 col-md-3">
@@ -522,29 +519,53 @@ function renderBasket() {
 }
 
 /* ——— RECIPES ——— */
+function mealTypeDefault(d) {
+  if (d.type === "breakfast") return "breakfast";
+  if (d.type === "soup") return "lunch";
+  if (d.type === "snack") return "dinner";
+  return "dinner";
+}
+
 function renderRecipes() {
   const root = $("#screen-recipes");
   const cats = [...new Set(state.data.dishes.map((d) => d.category))].sort();
   const proteins = [...new Set(state.data.dishes.map((d) => d.protein))].sort();
   root.innerHTML = `
-    <div class="card border-0 shadow-sm mb-3"><div class="card-body">
-      <h1 class="h3 mb-3">Рецепты</h1>
-      <div class="row g-2">
-        <div class="col-12 col-md-4"><input class="form-control form-control-lg" id="recipe-q" placeholder="Поиск: борщ, минтай, творог…" /></div>
-        <div class="col-6 col-md-2">
-          <select class="form-select" id="f-type"><option value="all">Все типы</option><option value="breakfast">Завтраки</option><option value="soup">Супы</option><option value="main">Основные</option><option value="snack">Перекусы</option></select>
-        </div>
-        <div class="col-6 col-md-2"><select class="form-select" id="f-cat"><option value="all">Категория</option>${cats.map((c) => `<option value="${c}">${c}</option>`).join("")}</select></div>
-        <div class="col-6 col-md-2"><select class="form-select" id="f-protein"><option value="all">Белок</option>${proteins.map((c) => `<option value="${c}">${c}</option>`).join("")}</select></div>
-        <div class="col-6 col-md-2"><select class="form-select" id="f-time"><option value="all">Время</option><option value="20">≤20 мин</option><option value="40">≤40 мин</option><option value="60">≤60 мин</option></select></div>
-        <div class="col-12 col-md-4"><select id="f-tags" multiple placeholder="Теги…"></select></div>
-        <div class="col-6 col-md-2 form-check mt-2 ms-2"><input class="form-check-input" type="checkbox" id="f-batch" /><label class="form-check-label" for="f-batch">Только batch 2+ дн</label></div>
-        <div class="col-6 col-md-2 form-check mt-2"><input class="form-check-input" type="checkbox" id="f-child" /><label class="form-check-label" for="f-child">Удобно ребёнку</label></div>
+    <div class="sk-hero">
+      <h1>Рецепты</h1>
+      <p>Выберите блюдо → укажите людей, порции и на сколько дней → добавьте в ближайший план.</p>
+    </div>
+    <div class="sk-card" style="margin-bottom:14px">
+      <div class="sk-row">
+        <label class="sk-field" style="flex:1;min-width:180px">Поиск
+          <input class="sk-input sk-input-lg" id="recipe-q" placeholder="борщ, минтай, творог…" />
+        </label>
+        <label class="sk-field">Тип
+          <select class="sk-select" id="f-type"><option value="all">Все</option><option value="breakfast">Завтраки</option><option value="soup">Супы</option><option value="main">Основные</option><option value="snack">Перекусы</option></select>
+        </label>
+        <label class="sk-field">Категория
+          <select class="sk-select" id="f-cat"><option value="all">Все</option>${cats.map((c) => `<option value="${c}">${c}</option>`).join("")}</select>
+        </label>
+        <label class="sk-field">Белок
+          <select class="sk-select" id="f-protein"><option value="all">Все</option>${proteins.map((c) => `<option value="${c}">${c}</option>`).join("")}</select>
+        </label>
+        <label class="sk-field">Время
+          <select class="sk-select" id="f-time"><option value="all">Любое</option><option value="20">≤20</option><option value="40">≤40</option><option value="60">≤60</option></select>
+        </label>
+        <label class="sk-field" style="min-width:180px">Теги
+          <select id="f-tags" multiple placeholder="Теги…"></select>
+        </label>
+        <label class="sk-field" style="flex-direction:row;align-items:center;gap:8px;min-height:48px">
+          <input type="checkbox" id="f-batch" /> batch 2+ дн
+        </label>
+        <label class="sk-field" style="flex-direction:row;align-items:center;gap:8px;min-height:48px">
+          <input type="checkbox" id="f-child" /> для ребёнка
+        </label>
       </div>
-    </div></div>
+    </div>
     <div class="recipe-layout-desk">
-      <div class="list-group recipe-list-pane shadow-sm rounded-3 overflow-hidden mb-3 mb-lg-0" id="recipe-list"></div>
-      <div class="card border-0 shadow-sm d-none d-lg-block"><div class="card-body" id="recipe-view"><p class="text-secondary">Выберите рецепт слева</p></div></div>
+      <div class="sk-list recipe-list-pane" id="recipe-list"></div>
+      <div class="sk-card" id="recipe-view"><p class="sk-meta">Выберите рецепт слева или откройте карточку</p></div>
     </div>`;
 
   const allTags = [...new Set(state.data.dishes.flatMap((d) => d.tags || []))].sort();
@@ -576,7 +597,6 @@ function renderRecipes() {
       if (time !== "all" && d.timeMin > +time) return false;
       if (batchOnly && (d.batchDays || 1) < 2) return false;
       if (child && (d.tags || []).some((t) => t === "острое")) return false;
-      if (child && d.type === "snack" && (d.tags || []).includes("сахар")) return false;
       if (tags.length && !tags.every((t) => (d.tags || []).includes(t))) return false;
       return true;
     });
@@ -585,19 +605,16 @@ function renderRecipes() {
     list.forEach((d) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = `list-group-item list-group-item-action ${d.id === state.selectedRecipe ? "active" : ""}`;
-      b.innerHTML = `<div class="fw-semibold">${d.name}</div><div class="small ${d.id === state.selectedRecipe ? "text-white-50" : "text-secondary"}">${d.category} · ${d.timeMin} мин · ${rub(d.costBatch)}</div>`;
+      b.className = d.id === state.selectedRecipe ? "active" : "";
+      b.innerHTML = `<div style="font-weight:750">${d.name}</div><div class="sk-meta">${d.category} · ${d.timeMin} мин · ${rub(d.costBatch)}</div>`;
       b.onclick = () => {
         state.selectedRecipe = d.id;
-        openRecipe(d.id, false);
-        $("#recipe-view").innerHTML = recipeHtml(d);
+        mountRecipeView(d, $("#recipe-view"));
         redraw();
       };
       pane.appendChild(b);
     });
-    if (!list.length) pane.innerHTML = `<div class="p-3 text-secondary">Ничего не найдено</div>`;
-    const cur = dish(state.selectedRecipe);
-    if (cur && $("#recipe-view")) $("#recipe-view").innerHTML = recipeHtml(cur);
+    if (!list.length) pane.innerHTML = `<div style="padding:14px" class="sk-meta">Ничего не найдено</div>`;
   };
 
   ["recipe-q", "f-type", "f-cat", "f-protein", "f-time", "f-batch", "f-child"].forEach((id) => {
@@ -607,44 +624,147 @@ function renderRecipes() {
   ts.on("change", redraw);
   if (!state.selectedRecipe) state.selectedRecipe = state.data.dishes[0]?.id;
   redraw();
+  const cur = dish(state.selectedRecipe);
+  if (cur) mountRecipeView(cur, $("#recipe-view"));
 }
 
-function recipeHtml(d) {
+function recipeHtml(d, servingsOverride = null) {
+  const servings = servingsOverride || d.servings;
+  const scaled = scaleIngredients(d, servings);
+  const cost = scaled.reduce((s, i) => s + (state.cat.products[i.id]?.price || 0) * i.amount, 0);
   const stores = [...new Set((d.stores || []).map((s) => storeName(state.data.stores, s)))].join(", ");
-  const rows = (d.ingredients || [])
+  const rows = scaled
     .map((i) => {
       const p = state.cat.products[i.id];
       return `<tr><td>${p?.name || i.id}</td><td>${amountLabel(p, i.amount)}</td><td>${storeName(state.data.stores, p?.store)}</td><td>${rub((p?.price || 0) * i.amount)}</td></tr>`;
     })
     .join("");
+  const startIdx = planDayIndex(state.plan);
+  const dayOpts = state.plan
+    .map((day, i) => `<option value="${i}" ${i === startIdx ? "selected" : ""}>${day.dayName}${i === startIdx ? " (сегодня)" : ""}</option>`)
+    .join("");
   return `
-    <p class="lead">${d.description || ""}</p>
-    <div class="d-flex flex-wrap gap-1 mb-2">
-      <span class="badge text-bg-success">${d.category}</span>
-      <span class="badge text-bg-secondary">${d.protein}</span>
-      ${(d.equipment || []).map((e) => `<span class="badge text-bg-light text-dark border">${e}</span>`).join("")}
-      <span class="badge text-bg-light text-dark border">batch ${d.batchDays} дн</span>
-      <span class="badge text-bg-light text-dark border">${d.servings} порц</span>
-      <span class="badge text-bg-light text-dark border">~${d.timeMin} мин</span>
-      <span class="badge text-bg-warning-subtle text-dark">партия ${rub(d.costBatch)}</span>
+    <p class="sk-meta" style="font-size:1.02rem;color:var(--ink)">${d.description || ""}</p>
+    <div class="sk-chip-row">
+      <span class="sk-tag ok">${d.category}</span>
+      <span class="sk-tag">${d.protein}</span>
+      ${(d.equipment || []).map((e) => `<span class="sk-tag">${e}</span>`).join("")}
+      <span class="sk-tag">~${d.timeMin} мин</span>
+      <span class="sk-tag hot">база ${d.servings} порц · ${rub(d.costBatch)}</span>
     </div>
-    <p class="small text-secondary">Где купить: ${stores || "—"}</p>
-    <div class="alert alert-warning"><strong>Дочка:</strong> ${d.child}</div>
-    <h3 class="h5">Ингредиенты на партию</h3>
-    <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Продукт</th><th>Кол-во</th><th>Магазин</th><th>₽</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <h3 class="h5">Как готовить</h3>
-    <ol class="recipe-step">${(d.steps || []).map((s) => `<li class="mb-2">${s}</li>`).join("")}</ol>
-    <h3 class="h5">Подсказки</h3>
+    <p class="sk-meta">Где купить: ${stores || "—"}</p>
+    <div class="sk-note"><b>Дочка:</b> ${d.child}</div>
+
+    <div class="sk-card tone" style="margin:14px 0">
+      <h3 style="margin-top:0">Добавить в ближайшую еду</h3>
+      <p class="sk-meta">Укажите на сколько людей готовите, сколько порций выйдет и на сколько дней растянуть batch.</p>
+      <div class="sk-plan-form" data-plan-form>
+        <label class="sk-field">Приём пищи
+          <select class="sk-select" data-f="meal">
+            <option value="breakfast" ${mealTypeDefault(d) === "breakfast" ? "selected" : ""}>Завтрак</option>
+            <option value="lunch" ${mealTypeDefault(d) === "lunch" ? "selected" : ""}>Обед</option>
+            <option value="dinner" ${mealTypeDefault(d) === "dinner" ? "selected" : ""}>Ужин</option>
+          </select>
+        </label>
+        <label class="sk-field">С какого дня
+          <select class="sk-select" data-f="start">${dayOpts}</select>
+        </label>
+        <label class="sk-field">Людей
+          <input class="sk-input" type="number" min="1" max="12" value="3" data-f="people" />
+        </label>
+        <label class="sk-field">Дней (batch)
+          <input class="sk-input" type="number" min="1" max="7" value="${Math.min(3, d.batchDays || 2)}" data-f="days" />
+        </label>
+        <label class="sk-field span-2">Порций всего (на всю партию)
+          <input class="sk-input" type="number" min="1" max="40" value="${Math.max(d.servings, 6)}" data-f="servings" />
+        </label>
+      </div>
+      <div class="sk-meta" data-scale-hint>Ингредиенты ниже пересчитаны под выбранные порции · сейчас ~${rub(cost)}</div>
+      <div class="sk-row">
+        <button class="sk-btn sk-btn-accent" data-act="to-plan">В план</button>
+        <button class="sk-btn sk-btn-ghost" data-act="sync-servings">Пересчитать продукты</button>
+      </div>
+    </div>
+
+    <h3>Ингредиенты <span class="sk-meta" data-ing-label>(на ${servings} порц)</span></h3>
+    <div style="overflow:auto"><table class="sk-table" data-ing-table><thead><tr><th>Продукт</th><th>Кол-во</th><th>Магазин</th><th>₽</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <h3>Как готовить</h3>
+    <ol class="recipe-step">${(d.steps || []).map((s) => `<li>${s}</li>`).join("")}</ol>
+    <h3>Подсказки</h3>
     <ul>${(d.tips || []).map((t) => `<li>${t}</li>`).join("")}</ul>
-    <div class="alert alert-success">На порцию ~<strong>${rub(d.costPerServing)}</strong></div>
-    <div class="d-grid d-sm-flex gap-2">
-      <button class="btn btn-success" data-act="cooked"><i class="bi bi-check2 me-1"></i>Приготовил — списать продукты</button>
-      <button class="btn btn-outline-secondary" data-act="dislike">Не предлагать</button>
-      <button class="btn btn-outline-success" data-act="love">В любимое</button>
+    <div class="sk-ok">Базовая порция рецепта ~<b>${rub(d.costPerServing)}</b></div>
+    <div class="sk-row">
+      <button class="sk-btn sk-btn-primary" data-act="cooked">Приготовил — списать</button>
+      <button class="sk-btn sk-btn-ghost" data-act="dislike">Не предлагать</button>
+      <button class="sk-btn sk-btn-ghost" data-act="love">В любимое</button>
     </div>`;
 }
 
+function readPlanForm(root, d) {
+  const g = (name) => root.querySelector(`[data-f="${name}"]`);
+  let people = Math.max(1, +g("people")?.value || 3);
+  let days = Math.max(1, Math.min(7, +g("days")?.value || 1));
+  let servings = Math.max(1, +g("servings")?.value || people * days);
+  // если пользователь крутит людей/дни — предлагаем servings = people * days, но не ломаем ручной ввод servings без sync
+  return {
+    meal: g("meal")?.value || mealTypeDefault(d),
+    startIndex: +g("start")?.value || 0,
+    people,
+    days,
+    servings,
+  };
+}
+
+function refreshIngredientTable(root, d) {
+  const form = readPlanForm(root, d);
+  const scaled = scaleIngredients(d, form.servings);
+  const cost = scaled.reduce((s, i) => s + (state.cat.products[i.id]?.price || 0) * i.amount, 0);
+  const tb = root.querySelector("[data-ing-table] tbody");
+  const label = root.querySelector("[data-ing-label]");
+  const hint = root.querySelector("[data-scale-hint]");
+  if (label) label.textContent = `(на ${form.servings} порц · ${form.people} чел · ${form.days} дн)`;
+  if (hint) hint.textContent = `Ингредиенты под партию · ~${rub(cost)} · ~${Math.round(form.servings / form.days)} порц/день`;
+  if (tb) {
+    tb.innerHTML = scaled
+      .map((i) => {
+        const p = state.cat.products[i.id];
+        return `<tr><td>${p?.name || i.id}</td><td>${amountLabel(p, i.amount)}</td><td>${storeName(state.data.stores, p?.store)}</td><td>${rub((p?.price || 0) * i.amount)}</td></tr>`;
+      })
+      .join("");
+  }
+}
+
 function bindRecipeActions(d, root) {
+  root.dataset.bound = "1";
+  const autoServings = () => {
+    const people = +root.querySelector('[data-f="people"]')?.value || 3;
+    const days = +root.querySelector('[data-f="days"]')?.value || 1;
+    const serv = root.querySelector('[data-f="servings"]');
+    if (serv) serv.value = String(people * days);
+    refreshIngredientTable(root, d);
+  };
+  root.querySelector('[data-f="people"]')?.addEventListener("change", autoServings);
+  root.querySelector('[data-f="days"]')?.addEventListener("change", autoServings);
+  root.querySelector('[data-f="servings"]')?.addEventListener("change", () => refreshIngredientTable(root, d));
+  root.querySelector('[data-act="sync-servings"]')?.addEventListener("click", () => refreshIngredientTable(root, d));
+
+  root.querySelector('[data-act="to-plan"]')?.addEventListener("click", async () => {
+    const form = readPlanForm(root, d);
+    state.plan = placeRecipeInPlan(state.plan, {
+      recipeId: d.id,
+      meal: form.meal,
+      startIndex: form.startIndex,
+      days: form.days,
+      people: form.people,
+      servings: form.servings,
+      dishBaseServings: d.servings,
+    });
+    await persistLocal();
+    toast(`«${d.name}» → ${form.days} дн · ${form.people} чел · ${form.servings} порц`);
+    closeRecipeModal();
+    setScreen("plan");
+  });
+
   root.querySelector('[data-act="dislike"]')?.addEventListener("click", async () => {
     if (!state.settings.disliked.includes(d.id)) state.settings.disliked.push(d.id);
     await persistLocal();
@@ -656,8 +776,10 @@ function bindRecipeActions(d, root) {
     toast("В любимых");
   });
   root.querySelector('[data-act="cooked"]')?.addEventListener("click", async () => {
+    const form = readPlanForm(root, d);
+    const scaled = scaleIngredients(d, form.servings);
     const items = [];
-    for (const ing of d.ingredients || []) {
+    for (const ing of scaled) {
       const have = state.inventory[ing.id] || 0;
       const use = Math.min(have, ing.amount);
       if (use > 0) {
@@ -672,19 +794,28 @@ function bindRecipeActions(d, root) {
   });
 }
 
+function mountRecipeView(d, root) {
+  if (!root) return;
+  root.innerHTML = recipeHtml(d);
+  bindRecipeActions(d, root);
+}
+
+function openRecipeModal() {
+  $("#recipeModal")?.classList.add("show");
+}
+function closeRecipeModal() {
+  $("#recipeModal")?.classList.remove("show");
+}
+
 function openRecipe(id, showModal = true) {
   const d = dish(id);
   if (!d) return;
   state.selectedRecipe = id;
   $("#recipeModalTitle").textContent = d.name;
   const body = $("#recipeModalBody");
-  body.innerHTML = recipeHtml(d);
-  bindRecipeActions(d, body);
-  if ($("#recipe-view")) {
-    $("#recipe-view").innerHTML = recipeHtml(d);
-    bindRecipeActions(d, $("#recipe-view"));
-  }
-  if (showModal) recipeModal.show();
+  mountRecipeView(d, body);
+  if ($("#recipe-view")) mountRecipeView(d, $("#recipe-view"));
+  if (showModal) openRecipeModal();
 }
 
 /* ——— STATS ——— */
@@ -889,8 +1020,10 @@ async function boot() {
   state.cat = indexCatalog(state.data);
   await loadLocal();
 
-  recipeModal = new bootstrap.Modal("#recipeModal");
-  toastObj = new bootstrap.Toast("#liveToast", { delay: 2600 });
+  $("#modal-close")?.addEventListener("click", closeRecipeModal);
+  $("#recipeModal")?.addEventListener("click", (e) => {
+    if (e.target.id === "recipeModal") closeRecipeModal();
+  });
 
   $$("[data-profile]").forEach((b) => {
     b.onclick = async () => {
