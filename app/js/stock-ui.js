@@ -348,25 +348,47 @@ export function createStockUi(ctx) {
     return list;
   }
 
+  function invSelected() {
+    if (!state._invSelected) state._invSelected = new Set();
+    return state._invSelected;
+  }
+
+  function updateInvBulkBar() {
+    const bar = $("#inv-bulk");
+    if (!bar) return;
+    const n = invSelected().size;
+    bar.style.display = n ? "flex" : "none";
+    const lab = $("#inv-bulk-n");
+    if (lab) lab.textContent = `Выбрано: ${n}`;
+  }
+
   function paintInvRows() {
     const tb = $("#inv-tb");
     if (!tb) return;
     tb.innerHTML = "";
+    const sel = invSelected();
     filteredProducts().forEach((p) => {
       const amt = invAmount(state.inventory, p.id);
       const lot = state.inventory[p.id] || {};
       const st = expiryStatus(lot.expiresAt);
       const tr = document.createElement("tr");
       tr.className = `inv-row ${amt ? "has" : ""} exp-${st}`;
-      tr.style.cursor = "pointer";
-      tr.innerHTML = `<td>${p.photo ? `<img src="${p.photo}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:10px" />` : `<span class="prod-ico">${productIcon(p)}</span>`}</td>
-        <td><b>${p.name}</b>${p.brand ? `<div class="sk-meta">${p.brand}</div>` : ""}<div class="sk-meta">${p.category || ""}</div></td>
+      tr.innerHTML = `<td><input type="checkbox" data-sel ${sel.has(p.id) ? "checked" : ""} /></td>
+        <td>${p.photo ? `<img src="${p.photo}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:10px" />` : `<span class="prod-ico">${productIcon(p)}</span>`}</td>
+        <td style="cursor:pointer" data-open><b>${p.name}</b>${p.brand ? `<div class="sk-meta">${p.brand}</div>` : ""}<div class="sk-meta">${p.category || ""}</div></td>
         <td>${amt ? formatAmount(amt, p) : "—"}</td>
         <td>${ZONE_LABEL[guessZone(p)]}</td>
         <td>${lot.expiresAt || "—"}</td>`;
-      tr.onclick = () => openProductModal(p.id, "edit");
+      tr.querySelector("[data-sel]").onclick = (e) => e.stopPropagation();
+      tr.querySelector("[data-sel]").onchange = (e) => {
+        if (e.target.checked) sel.add(p.id);
+        else sel.delete(p.id);
+        updateInvBulkBar();
+      };
+      tr.querySelector("[data-open]").onclick = () => openProductModal(p.id, "edit");
       tb.appendChild(tr);
     });
+    updateInvBulkBar();
   }
 
   function renderCookFromExpiring(body) {
@@ -419,7 +441,17 @@ export function createStockUi(ctx) {
           </label>
         </div>
       </div>
-      <div class="inv-table-wrap"><table class="sk-table inv-table"><thead><tr><th></th><th>Продукт</th><th>Кол-во</th><th>Зона</th><th>Срок</th></tr></thead><tbody id="inv-tb"></tbody></table></div>`;
+      <div class="sk-row inv-bulk" id="inv-bulk" style="display:none;margin-bottom:10px;gap:8px;flex-wrap:wrap;align-items:center">
+        <span class="sk-meta" id="inv-bulk-n">Выбрано: 0</span>
+        <button class="sk-btn sk-btn-ghost" id="inv-sel-all" style="min-height:40px">Все на экране</button>
+        <button class="sk-btn sk-btn-ghost" id="inv-sel-none" style="min-height:40px">Снять</button>
+        <select class="sk-select" id="inv-bulk-zone" style="max-width:140px">
+          ${Object.entries(ZONE_LABEL).map(([k, lab]) => `<option value="${k}">${lab}</option>`).join("")}
+        </select>
+        <button class="sk-btn sk-btn-ghost" id="inv-bulk-zone-go" style="min-height:40px">Зона</button>
+        <button class="sk-btn sk-btn-accent" id="inv-bulk-clear" style="min-height:40px">Обнулить запас</button>
+      </div>
+      <div class="inv-table-wrap"><table class="sk-table inv-table"><thead><tr><th></th><th></th><th>Продукт</th><th>Кол-во</th><th>Зона</th><th>Срок</th></tr></thead><tbody id="inv-tb"></tbody></table></div>`;
 
     QUICK.forEach(([id]) => {
       const p = state.cat.products[id];
@@ -448,24 +480,65 @@ export function createStockUi(ctx) {
       state._invZone = e.target.value;
       paintInvRows();
     };
+    $("#inv-sel-all").onclick = () => {
+      const sel = invSelected();
+      filteredProducts().forEach((p) => sel.add(p.id));
+      paintInvRows();
+    };
+    $("#inv-sel-none").onclick = () => {
+      invSelected().clear();
+      paintInvRows();
+    };
+    $("#inv-bulk-zone-go").onclick = async () => {
+      const zone = $("#inv-bulk-zone").value;
+      const sel = [...invSelected()];
+      if (!sel.length) return;
+      if (!state.settings.invZones) state.settings.invZones = {};
+      sel.forEach((id) => {
+        state.settings.invZones[id] = zone;
+        if (state.inventory[id]) state.inventory[id].zone = zone;
+      });
+      await saveInventoryAndSync();
+      toast(`Зона → ${ZONE_LABEL[zone]} · ${sel.length}`);
+      paintInvRows();
+    };
+    $("#inv-bulk-clear").onclick = async () => {
+      const sel = [...invSelected()];
+      if (!sel.length) return;
+      if (!confirm(`Обнулить запас у ${sel.length} поз.?`)) return;
+      sel.forEach((id) => {
+        state.inventory = setInvAmount(state.inventory, id, 0);
+      });
+      invSelected().clear();
+      await saveInventoryAndSync();
+      toast("Обнулили");
+      paintInvRows();
+    };
   }
 
   function renderMeals(body) {
     const meals = state.settings.mealStock || [];
     body.innerHTML = `<div class="shop-list" id="meal-list"></div>`;
     const box = $("#meal-list");
-    if (!meals.length) box.innerHTML = `<div class="sk-note">Нет готовых блюд. Отметьте «Приготовил» в рецепте.</div>`;
+    if (!meals.length) box.innerHTML = `<div class="sk-note">Нет готовых блюд. В рецепте нажмите «Приготовил» и подтвердите списание.</div>`;
     meals.forEach((m) => {
       const st = expiryStatus(m.expiresAt);
       const row = document.createElement("div");
       row.className = `shop-item exp-${st}`;
-      row.innerHTML = `<div style="flex:1"><b>${m.name}</b><div class="sk-meta">${m.portions} порц · до ${m.expiresAt || "—"}</div></div>
-        <button type="button" class="sk-btn sk-btn-ghost" data-eat style="min-height:40px">−1</button>
-        <button type="button" class="shop-del" data-del>×</button>`;
+      row.innerHTML = `<div style="flex:1;min-width:0"><b>${m.name}</b><div class="sk-meta">${m.portions} порц · до ${m.expiresAt || "—"}</div></div>
+        <div class="sk-row" style="gap:6px;align-items:center;flex-wrap:wrap">
+          ${m.recipeId ? `<button type="button" class="sk-btn sk-btn-ghost" data-cook style="min-height:40px">Приготовил</button>` : ""}
+          <input class="sk-input" type="number" min="1" max="${Math.max(1, m.portions)}" value="1" data-n style="max-width:64px" />
+          <button type="button" class="sk-btn sk-btn-accent" data-eat style="min-height:40px">Съел</button>
+          <button type="button" class="shop-del" data-del>×</button>
+        </div>`;
+      row.querySelector("[data-cook]")?.addEventListener("click", () => openRecipe(m.recipeId));
       row.querySelector("[data-eat]").onclick = async () => {
-        m.portions -= 1;
+        const n = Math.max(1, Math.min(m.portions || 1, +row.querySelector("[data-n]").value || 1));
+        m.portions -= n;
         if (m.portions <= 0) state.settings.mealStock = state.settings.mealStock.filter((x) => x.id !== m.id);
         await persistLocal();
+        toast(n === 1 ? "Съели 1 порцию" : `Съели ${n} порц.`);
         renderInventory();
       };
       row.querySelector("[data-del]").onclick = async () => {
@@ -558,6 +631,14 @@ export function createStockUi(ctx) {
         </div>
         <label class="sk-meta" style="display:block;margin-top:8px">Фото (необяз.) <input type="file" id="shop-photo" accept="image/*" /></label>
         <div class="sk-meta" id="shop-price-hist" style="margin-top:6px"></div>
+      </div>
+      <div class="sk-row shop-bulk" id="shop-bulk" style="display:none;margin-bottom:10px;gap:8px;flex-wrap:wrap;align-items:center">
+        <span class="sk-meta" id="shop-bulk-n">Выбрано: 0</span>
+        <button class="sk-btn sk-btn-ghost" id="shop-sel-all" style="min-height:40px">Все к покупке</button>
+        <button class="sk-btn sk-btn-ghost" id="shop-sel-none" style="min-height:40px">Снять</button>
+        <button class="sk-btn sk-btn-accent" id="shop-bulk-buy" style="min-height:40px">Куплено (без цены)</button>
+        <button class="sk-btn sk-btn-ghost" id="shop-bulk-share" style="min-height:40px">Поделиться выбранным</button>
+        <button class="sk-btn sk-btn-ghost" id="shop-bulk-del" style="min-height:40px">Удалить</button>
       </div>
       <div class="shop-list" id="shop-open"></div>
       <h3 style="margin:16px 0 8px">Куплено</h3>
@@ -745,6 +826,17 @@ export function createStockUi(ctx) {
     $("#shop-add").onclick = addItem;
     $("#shop-text").onkeydown = (e) => e.key === "Enter" && addItem();
 
+    if (!state._shopSelected) state._shopSelected = new Set();
+    const shopSel = state._shopSelected;
+    const updateShopBulk = () => {
+      const bar = $("#shop-bulk");
+      if (!bar) return;
+      const n = shopSel.size;
+      bar.style.display = n ? "flex" : "none";
+      const lab = $("#shop-bulk-n");
+      if (lab) lab.textContent = `Выбрано: ${n}`;
+    };
+
     const paint = (box, items) => {
       if (!items.length) {
         box.innerHTML = `<div class="sk-note">Пусто</div>`;
@@ -761,6 +853,7 @@ export function createStockUi(ctx) {
           .join("");
         const guessed = guessSpendCategory(p, it.text);
         row.innerHTML = `
+          ${!it.done ? `<input type="checkbox" data-bulk ${shopSel.has(it.id) ? "checked" : ""} style="width:20px;height:20px;margin:4px 4px 0 0" />` : ""}
           <button type="button" class="shop-check">${it.done ? "✓" : ""}</button>
           <div style="flex:1;min-width:0">
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -813,6 +906,11 @@ export function createStockUi(ctx) {
         };
         row.querySelector("[data-qty]")?.addEventListener("change", syncAmount);
         row.querySelector("[data-unit]")?.addEventListener("change", syncAmount);
+        row.querySelector("[data-bulk]")?.addEventListener("change", (e) => {
+          if (e.target.checked) shopSel.add(it.id);
+          else shopSel.delete(it.id);
+          updateShopBulk();
+        });
 
         row.querySelector(".shop-check").onclick = () => {
           if (it.done) return;
@@ -867,7 +965,7 @@ export function createStockUi(ctx) {
       });
     };
 
-    async function markBought(it, price, spendCat = "cooking") {
+    async function markBought(it, price, spendCat = "cooking", opts = {}) {
       it.done = true;
       it.price = price || 0;
       it.boughtAt = new Date().toISOString();
@@ -903,6 +1001,7 @@ export function createStockUi(ctx) {
                 : "cookingSpent";
         state.budget[ledgerKey] = (state.budget[ledgerKey] || 0) + price;
       }
+      if (opts.silent) return;
       await persistLocal();
       toast(price ? `Куплено · ${rub(price)}` : "Куплено");
       renderBasket();
@@ -910,6 +1009,56 @@ export function createStockUi(ctx) {
 
     paint($("#shop-open"), open);
     paint($("#shop-done"), done);
+    updateShopBulk();
+    $("#shop-sel-all").onclick = () => {
+      open.forEach((x) => shopSel.add(x.id));
+      renderBasket();
+    };
+    $("#shop-sel-none").onclick = () => {
+      shopSel.clear();
+      renderBasket();
+    };
+    $("#shop-bulk-del").onclick = async () => {
+      const ids = [...shopSel];
+      if (!ids.length) return;
+      state.settings.shoppingList = state.settings.shoppingList.filter((x) => !ids.includes(x.id));
+      shopSel.clear();
+      await persistLocal();
+      toast(`Удалено ${ids.length}`);
+      renderBasket();
+    };
+    $("#shop-bulk-buy").onclick = async () => {
+      const ids = [...shopSel];
+      if (!ids.length) return;
+      let n = 0;
+      for (const id of ids) {
+        const it = ensureList().find((x) => x.id === id && !x.done);
+        if (it) {
+          await markBought(it, 0, it.spendCategory || "cooking", { silent: true });
+          n += 1;
+        }
+      }
+      shopSel.clear();
+      await persistLocal();
+      toast(`Куплено ${n} (без цены)`);
+      renderBasket();
+    };
+    $("#shop-bulk-share").onclick = async () => {
+      const items = open.filter((x) => shopSel.has(x.id));
+      const text = `Покупки\n${(items.length ? items : open).map((x) => `• ${x.text}`).join("\n")}`;
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: "Покупки", text });
+          return;
+        } catch {}
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        toast("Скопировано");
+      } catch {
+        prompt("Скопируйте:", text);
+      }
+    };
     $("#shop-clear-done").onclick = async () => {
       state.settings.shoppingList = state.settings.shoppingList.filter((x) => !x.done);
       await persistLocal();

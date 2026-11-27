@@ -261,14 +261,15 @@ function mealStockActive() {
   return (state.settings.mealStock || []).filter((m) => (m.portions || 0) > 0);
 }
 
-async function eatMealPortion(mealId) {
+async function eatMealPortion(mealId, count = 1) {
   const meals = state.settings.mealStock || [];
   const m = meals.find((x) => x.id === mealId);
   if (!m) return;
-  m.portions = (m.portions || 1) - 1;
+  const n = Math.max(1, Math.min(m.portions || 1, +count || 1));
+  m.portions = (m.portions || 1) - n;
   if (m.portions <= 0) state.settings.mealStock = meals.filter((x) => x.id !== mealId);
   await persistLocal();
-  toast("Съели порцию из готового");
+  toast(n === 1 ? "Съели 1 порцию" : `Съели ${n} порц.`);
   renderScreen();
 }
 
@@ -463,10 +464,13 @@ function renderToday() {
       const row = document.createElement("div");
       row.className = `shop-item exp-${st}`;
       row.innerHTML = `<div style="flex:1"><b>${m.name}</b><div class="sk-meta">${m.portions} порц · до ${m.expiresAt || "—"}</div></div>
-        <button class="sk-btn sk-btn-accent" data-eat style="min-height:40px">Съели 1</button>
-        ${m.recipeId ? `<button class="sk-btn sk-btn-ghost" data-rec style="min-height:40px">Рецепт</button>` : ""}`;
-      row.querySelector("[data-eat]").onclick = () => eatMealPortion(m.id);
-      row.querySelector("[data-rec]")?.addEventListener("click", () => openRecipe(m.recipeId));
+        <div class="sk-row" style="gap:6px;align-items:center;flex-wrap:wrap">
+          ${m.recipeId ? `<button class="sk-btn sk-btn-ghost" data-cook style="min-height:40px">Приготовил</button>` : ""}
+          <input class="sk-input" type="number" min="1" max="${m.portions}" value="1" data-n style="max-width:64px" />
+          <button class="sk-btn sk-btn-accent" data-eat style="min-height:40px">Съел</button>
+        </div>`;
+      row.querySelector("[data-cook]")?.addEventListener("click", () => openRecipe(m.recipeId));
+      row.querySelector("[data-eat]").onclick = () => eatMealPortion(m.id, row.querySelector("[data-n]").value);
       stockBox.appendChild(row);
     });
   }
@@ -843,7 +847,7 @@ function recipeHtml(d, servingsOverride = null) {
     <ul>${(d.tips || []).map((t) => `<li>${t}</li>`).join("")}</ul>
     <div class="sk-ok">Базовая порция рецепта ~<b>${rub(d.costPerServing)}</b></div>
     <div class="sk-row">
-      <button class="sk-btn sk-btn-primary" data-act="cooked">Приготовил — списать</button>
+      <button class="sk-btn sk-btn-primary" data-act="cooked">Приготовил</button>
       <button class="sk-btn sk-btn-ghost" data-act="replace">Умная замена</button>
       <button class="sk-btn sk-btn-ghost" data-act="dislike">Не предлагать месяц</button>
       <button class="sk-btn sk-btn-ghost" data-act="love">В любимое</button>
@@ -955,23 +959,73 @@ function bindRecipeActions(d, root) {
     });
   });
 
-  root.querySelector('[data-act="cooked"]')?.addEventListener("click", async () => {
-    const form = readPlanForm(root, d);
-    const scaled = scaleIngredients(d, form.servings);
+  root.querySelector('[data-act="cooked"]')?.addEventListener("click", () => {
+    openCookPreview(d, readPlanForm(root, d));
+  });
+}
+
+/** Превью списания: скорректировать → подтвердить */
+function openCookPreview(d, form) {
+  const scaled = scaleIngredients(d, form.servings);
+  const rows = scaled.map((ing) => {
+    const p = state.cat.products[ing.id];
+    const have = invAmount(state.inventory, ing.id);
+    const need = ing.amount;
+    const use = Math.min(have, need);
+    return { id: ing.id, name: p?.name || ing.id, product: p, have, need, use };
+  });
+  $("#cookModalTitle").textContent = `Приготовил · ${d.name}`;
+  $("#cookModalBody").innerHTML = `
+    <p class="sk-meta">Проверьте, сколько списать со запасов. Можно поправить числа. Потом блюдо попадёт в «Готовое».</p>
+    <label class="sk-field">Порций в готовое<input class="sk-input" type="number" min="1" id="cook-portions" value="${form.servings}" /></label>
+    <div style="overflow:auto;margin-top:10px">
+      <table class="sk-table" id="cook-deduct-table">
+        <thead><tr><th></th><th>Продукт</th><th>Нужно</th><th>Есть</th><th>Списать</th></tr></thead>
+        <tbody>
+          ${rows
+            .map(
+              (r) => `<tr data-id="${r.id}">
+              <td><input type="checkbox" data-on ${r.use > 0 || r.have > 0 ? "checked" : ""} /></td>
+              <td><b>${r.name}</b>${r.have < r.need ? `<div class="sk-meta" style="color:var(--hot,#b33)">не хватает</div>` : ""}</td>
+              <td>${amountLabel(r.product, r.need)}</td>
+              <td>${r.have ? amountLabel(r.product, r.have) : "—"}</td>
+              <td><input class="sk-input" type="number" min="0" step="any" data-use value="${r.use}" style="max-width:110px" /></td>
+            </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+    <div class="sk-row" style="margin-top:12px">
+      <button class="sk-btn sk-btn-primary" id="cook-confirm">Списать и в готовое</button>
+      <button class="sk-btn sk-btn-ghost" id="cook-cancel">Отмена</button>
+    </div>`;
+  $("#cookModal")?.classList.add("show");
+  $("#cook-cancel").onclick = () => $("#cookModal")?.classList.remove("show");
+  $("#cook-confirm").onclick = async () => {
     const items = [];
-    for (const ing of scaled) {
-      const have = invAmount(state.inventory, ing.id);
-      const use = Math.min(have, ing.amount);
-      if (use > 0) {
-        state.inventory = setInvAmount(state.inventory, ing.id, have - use);
-        items.push({ id: ing.id, amount: use, name: state.cat.products[ing.id]?.name });
-      }
-    }
-    ensureStockUi().onCooked(d, form);
+    $$("#cook-deduct-table tbody tr").forEach((tr) => {
+      const on = tr.querySelector("[data-on]")?.checked;
+      if (!on) return;
+      const id = tr.dataset.id;
+      const use = Math.max(0, +tr.querySelector("[data-use]")?.value || 0);
+      if (!use) return;
+      const have = invAmount(state.inventory, id);
+      const take = Math.min(have, use);
+      if (take <= 0) return;
+      state.inventory = setInvAmount(state.inventory, id, have - take);
+      items.push({ id, amount: take, name: state.cat.products[id]?.name });
+    });
+    const portions = Math.max(1, +$("#cook-portions").value || form.servings);
+    const form2 = { ...form, servings: portions };
+    ensureStockUi().onCooked(d, form2);
     state.events.push(makeEvent({ type: "cook", recipeId: d.id, recipeName: d.name, meal: form.meal, items }));
     await saveInventoryAndSync();
-    toast("Списали продукты и добавили блюдо в запас");
-  });
+    $("#cookModal")?.classList.remove("show");
+    closeRecipeModal();
+    toast(items.length ? `Списали ${items.length} поз. · +${portions} порц. в готовое` : `В готовое +${portions} порц. (со запасов ничего)`);
+    if (state.screen === "today" || state.screen === "inventory") renderScreen();
+  };
 }
 
 function mountRecipeView(d, root) {
@@ -1360,6 +1414,10 @@ async function boot() {
   $("#day-modal-close")?.addEventListener("click", () => $("#dayModal")?.classList.remove("show"));
   $("#dayModal")?.addEventListener("click", (e) => {
     if (e.target.id === "dayModal") $("#dayModal")?.classList.remove("show");
+  });
+  $("#cook-modal-close")?.addEventListener("click", () => $("#cookModal")?.classList.remove("show"));
+  $("#cookModal")?.addEventListener("click", (e) => {
+    if (e.target.id === "cookModal") $("#cookModal")?.classList.remove("show");
   });
 
   $$("#nav-list [data-screen]").forEach((b) => {
