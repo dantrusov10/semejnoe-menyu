@@ -113,7 +113,100 @@ async function cloudSave() {
   updateSyncBadge();
 }
 
+function isMojibakeText(s) {
+  return !s || /[?]{2,}|�/.test(String(s));
+}
+
+/** Чинит ??? в покупках/кастом-продуктах (после битой UTF-8 выгрузки). */
+function repairShoppingMojibake() {
+  const UNIT_LABEL = { pcs: "шт", pack: "уп", g: "г", kg: "кг", ml: "мл", l: "л" };
+  const KNOWN = [
+    { idPattern: /^custom_\?{4}_\?{8}_/, name: "Фуэт / колбаски", unit: "pcs", qty: 1, category: "вкусняшки", spendCategory: "treats", comment: "Вкусняшки недели" },
+    { idPattern: /^custom_\?{2}_\?{4}_\?{3}_/, name: "Твёрдый сыр", unit: "g", qty: 200, category: "вкусняшки", spendCategory: "treats", comment: "Вкусняшки недели" },
+    { idPattern: /^custom_\?{5}_/, name: "Чипсы", unit: "pack", qty: 1, category: "вкусняшки", spendCategory: "treats", comment: "Вкусняшки недели" },
+    { idPattern: /^custom_\?{8}_/, name: "Сухарики", unit: "pack", qty: 1, category: "вкусняшки", spendCategory: "treats", comment: "Вкусняшки недели" },
+  ];
+  const slugId = (name, suffix) => {
+    const slug = name
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      .replace(/[^a-zа-я0-9]+/gi, "_")
+      .replace(/^_|_$/g, "")
+      .slice(0, 40);
+    return `custom_${slug}_${suffix}`;
+  };
+
+  if (!Array.isArray(state.settings.customProducts)) state.settings.customProducts = [];
+  if (!Array.isArray(state.settings.shoppingList)) state.settings.shoppingList = [];
+  const idMap = new Map();
+  let changed = false;
+
+  state.settings.customProducts = state.settings.customProducts
+    .map((p) => {
+      const hit = KNOWN.find((k) => k.idPattern.test(p?.id || ""));
+      if (!hit || (!isMojibakeText(p.name) && !isMojibakeText(p.category))) return p;
+      const suffix = (p.id.split("_").pop() || "x").slice(0, 5);
+      const newId = slugId(hit.name, suffix);
+      idMap.set(p.id, newId);
+      changed = true;
+      return {
+        ...p,
+        id: newId,
+        name: hit.name,
+        unit: hit.unit === "pack" || hit.unit === "pcs" ? "pcs" : hit.unit === "g" ? "g" : p.unit,
+        category: hit.category,
+        custom: true,
+      };
+    })
+    .filter((p) => p && !isMojibakeText(p.name));
+
+  state.settings.shoppingList = state.settings.shoppingList.map((it) => {
+    const oldId = it.productId || "";
+    let hit = KNOWN.find((k) => k.idPattern.test(oldId));
+    if (!hit && isMojibakeText(it.text)) {
+      hit = KNOWN.find(
+        (k) => k.qty === Number(it.qty) && k.unit === it.unit && k.spendCategory === (it.spendCategory || "")
+      );
+    }
+    if (!hit) return it;
+    const newId = idMap.get(oldId) || slugId(hit.name, (oldId.split("_").pop() || "x").slice(0, 5));
+    if (!idMap.has(oldId)) {
+      idMap.set(oldId, newId);
+      if (!state.settings.customProducts.some((p) => p.id === newId)) {
+        state.settings.customProducts.push({
+          id: newId,
+          name: hit.name,
+          unit: hit.unit === "pack" || hit.unit === "pcs" ? "pcs" : hit.unit,
+          price: 0,
+          store: "ashan",
+          category: hit.category,
+          kcal: 0,
+          protein: 0,
+          fat: 0,
+          carbs: 0,
+          shelfDays: 14,
+          defaultZone: "pantry",
+          brand: "",
+          photo: "",
+          custom: true,
+        });
+      }
+    }
+    changed = true;
+    return {
+      ...it,
+      productId: newId,
+      text: `${hit.name} — ${it.qty ?? hit.qty} ${UNIT_LABEL[it.unit] || it.unit}`,
+      category: hit.category,
+      comment: isMojibakeText(it.comment) ? hit.comment : it.comment,
+    };
+  });
+
+  return changed;
+}
+
 function mergeCustomProducts() {
+  const repaired = repairShoppingMojibake();
   if (!Array.isArray(state.settings.customProducts)) state.settings.customProducts = [];
   for (const p of state.settings.customProducts) {
     if (!p?.id) continue;
@@ -134,6 +227,7 @@ function mergeCustomProducts() {
     state.cat.dishes[d.id] = d;
     if (!state.data.dishes.find((x) => x.id === d.id)) state.data.dishes.push(d);
   }
+  return repaired;
 }
 
 function isTyping() {
@@ -166,7 +260,7 @@ async function loadLocal() {
     savedPlan?.length ? savedPlan : draftWeekPlan(state.data, state.settings, state.weekNum),
     state.data?.menu
   );
-  mergeCustomProducts();
+  if (mergeCustomProducts()) await persistLocal();
 }
 
 function dish(id) {

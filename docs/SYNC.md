@@ -9,15 +9,12 @@
 
 **Домашний компьютер не нужен.**
 
-## Важно: закрепить аккаунт Cloudflare (один раз)
+## Cloudflare
 
-Worker создан на preview-аккаунте. Чтобы он не истёк, один раз закрепите его:
+Preview-аккаунт **Jazzy Selenium** закреплён (claim выполнен).  
+API: `https://semejnoe-menyu-api.jazzy-selenium.workers.dev`
 
-1. Откройте: https://dash.cloudflare.com/claim-preview?claimToken=SUbCjmluo4benNPtZ3vy48NkcfHdh2zOG3DOzaFQwHY  
-2. Войдите через **Continue with GitHub** (аккаунт dantrusov10)  
-3. Готово — облако становится постоянным
-
-Если ссылка истекла — напишите агенту пересоздать Worker.
+Если Worker пропал — напишите агенту пересоздать.
 
 ## AI (free tier)
 
