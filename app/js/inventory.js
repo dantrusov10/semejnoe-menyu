@@ -86,25 +86,51 @@ export function expiryStatus(expiresAt, warnDays = 3) {
   return "ok";
 }
 
+/** Все стандартные единицы для свободного ввода */
+export const ALL_UNITS = [
+  { value: "g", label: "г", factor: 1, base: "g" },
+  { value: "kg", label: "кг", factor: 1000, base: "g" },
+  { value: "ml", label: "мл", factor: 1, base: "ml" },
+  { value: "l", label: "л", factor: 1000, base: "ml" },
+  { value: "pcs", label: "шт", factor: 1, base: "pcs" },
+  { value: "pack", label: "уп", factor: 1, base: "pcs" },
+  { value: "bunch", label: "пучок", factor: 1, base: "pcs" },
+  { value: "can", label: "банка", factor: 1, base: "pcs" },
+];
+
 export function unitOptions(product) {
-  if (!product) return [{ value: "g", label: "г", factor: 1 }];
-  if (product.unit === "pcs") return [{ value: "pcs", label: "шт", factor: 1 }];
-  if (product.unit === "ml") {
-    return [
-      { value: "ml", label: "мл", factor: 1 },
-      { value: "l", label: "л", factor: 1000 },
-    ];
-  }
-  return [
-    { value: "g", label: "г", factor: 1 },
-    { value: "kg", label: "кг", factor: 1000 },
-  ];
+  if (!product) return ALL_UNITS;
+  if (product.unit === "pcs") return ALL_UNITS.filter((u) => u.base === "pcs");
+  if (product.unit === "ml") return ALL_UNITS.filter((u) => u.base === "ml" || u.value === "pcs");
+  if (product.unit === "g") return ALL_UNITS.filter((u) => u.base === "g" || u.value === "pcs");
+  return ALL_UNITS;
 }
 
 export function toBaseAmount(qty, unitValue, product) {
   const opts = unitOptions(product);
-  const opt = opts.find((o) => o.value === unitValue) || opts[0];
-  return Math.round((+qty || 0) * opt.factor * 100) / 100;
+  const opt = opts.find((o) => o.value === unitValue) || ALL_UNITS.find((o) => o.value === unitValue) || opts[0];
+  return Math.round((+qty || 0) * (opt?.factor || 1) * 100) / 100;
+}
+
+/**
+ * Цена → сумма за партию.
+ * mode: total | per_pcs | per_100g | per_kg
+ */
+export function priceToTotal(price, mode, amount, product) {
+  const p = +price || 0;
+  if (!p) return 0;
+  if (mode === "total") return Math.round(p);
+  if (mode === "per_pcs") {
+    const pcs = product?.unit === "pcs" ? amount : amount;
+    return Math.round(p * Math.max(1, pcs || 1));
+  }
+  if (mode === "per_100g") return Math.round(p * ((amount || 0) / 100));
+  if (mode === "per_kg") return Math.round(p * ((amount || 0) / 1000));
+  return Math.round(p);
+}
+
+export function inferBaseUnit(unitValue) {
+  return ALL_UNITS.find((u) => u.value === unitValue)?.base || "g";
 }
 
 export function fromBaseAmount(amount, product) {

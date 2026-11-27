@@ -330,6 +330,14 @@ tr.inv-detail td { background: var(--surface-2); padding: 12px 14px; }
   align-items: center;
   margin-top: 6px;
 }
+.price-pop .sk-seg {
+  flex-wrap: wrap;
+  width: 100%;
+}
+.price-pop .sk-seg button {
+  font-size: 0.78rem;
+  padding: 6px 8px;
+}
 
 /* ——— Surfaces ——— */
 .sk-panel { display: none; }

@@ -58,9 +58,11 @@ export function defaultSettings() {
   return {
     profile: "kitchen", // kitchen | command
     cookingBudget: 32000,
-    wineBudget: 8000,
-    ginBudget: 16000,
+    alcoholBudget: 24000, // вино+джин вместе
+    wineBudget: 8000, // legacy
+    ginBudget: 16000, // legacy
     treatsBudget: 10000,
+    sweetBudget: 4000,
     treatsWeekly: 2500,
     childRules: {
       noSugar: true,
@@ -77,9 +79,10 @@ export function defaultSettings() {
     shoppingList: [],
     treats: [],
     mealStock: [],
+    customProducts: [],
     invZones: {},
     basketPick: { days: [0, 1, 2, 3, 4, 5, 6], meals: { breakfast: true, lunch: true, dinner: true } },
-    period: { days: 7, adults: 2, childPortions: 1, childAge: 1.5, mode: "recipes" },
+    period: { days: 7, adults: 2, childPortions: 1, childAge: 1.5, mode: "recipes", budgetCap: 0 },
   };
 }
 
@@ -87,8 +90,10 @@ export function defaultBudgetLedger() {
   return {
     month: new Date().toISOString().slice(0, 7),
     cookingSpent: 0,
-    wineSpent: 0,
-    ginSpent: 0,
+    alcoholSpent: 0,
+    wineSpent: 0, // legacy
+    ginSpent: 0, // legacy
     treatsSpent: 0,
+    sweetSpent: 0,
   };
 }

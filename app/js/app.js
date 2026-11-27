@@ -39,6 +39,8 @@ import {
   spendByCategory,
   spendTimeline,
   totalSpend,
+  cooksByMeal,
+  SPEND_LABELS,
   dayjs,
 } from "./stats.js";
 
@@ -101,16 +103,35 @@ async function cloudSave() {
   updateSyncBadge();
 }
 
+function mergeCustomProducts() {
+  if (!Array.isArray(state.settings.customProducts)) state.settings.customProducts = [];
+  for (const p of state.settings.customProducts) {
+    if (!p?.id) continue;
+    state.cat.products[p.id] = p;
+    if (!state.data.products.find((x) => x.id === p.id)) state.data.products.push(p);
+  }
+}
+
 async function loadLocal() {
   state.settings = { ...defaultSettings(), ...(await dbGet("settings", {})) };
   if (!Array.isArray(state.settings.mealStock)) state.settings.mealStock = [];
+  if (!Array.isArray(state.settings.customProducts)) state.settings.customProducts = [];
   if (!state.settings.period) state.settings.period = defaultSettings().period;
+  if (state.settings.alcoholBudget == null) {
+    state.settings.alcoholBudget = (state.settings.wineBudget || 0) + (state.settings.ginBudget || 0);
+  }
+  if (state.settings.sweetBudget == null) state.settings.sweetBudget = 4000;
   state.inventory = normalizeInventory((await dbGet("inventory", {})) || {});
   state.events = (await dbGet("events", [])) || [];
   state.weekNum = (await dbGet("weekNum", 1)) || 1;
   state.budget = { ...defaultBudgetLedger(), ...(await dbGet("budget", {})) };
+  if (state.budget.alcoholSpent == null) {
+    state.budget.alcoholSpent = (state.budget.wineSpent || 0) + (state.budget.ginSpent || 0);
+  }
+  if (state.budget.sweetSpent == null) state.budget.sweetSpent = 0;
   const savedPlan = await dbGet("plan", null);
   state.plan = savedPlan?.length ? savedPlan : draftWeekPlan(state.data, state.settings, state.weekNum);
+  mergeCustomProducts();
 }
 
 function dish(id) {
@@ -138,10 +159,12 @@ async function syncPull(preferCloud = true) {
       if (cloud.settings) {
         state.settings = { ...defaultSettings(), ...state.settings, ...cloud.settings };
         if (!Array.isArray(state.settings.mealStock)) state.settings.mealStock = [];
+        if (!Array.isArray(state.settings.customProducts)) state.settings.customProducts = [];
       }
       if (cloud.budget) state.budget = { ...state.budget, ...cloud.budget };
       if (cloud.weekNum) state.weekNum = cloud.weekNum;
     }
+    mergeCustomProducts();
     state.events = mergeEvents(state.events, cloud.events || []);
     state.syncAt = cloud.updatedAt || new Date().toISOString();
     state.syncError = null;
@@ -209,6 +232,39 @@ function matchesCategory(d, cat) {
   return false;
 }
 
+function planDateRange(plan) {
+  const dates = (plan || []).map((d) => d.date).filter(Boolean).sort();
+  return { from: dates[0] || null, to: dates[dates.length - 1] || null, count: dates.length };
+}
+
+function openDayModal(day) {
+  if (!day) return;
+  $("#dayModalTitle").textContent = day.label || day.dayName || "День";
+  const meals = [
+    ["Завтрак", day.breakfast],
+    ["Обед", day.lunch],
+    ["Ужин", day.dinner],
+    ...(day.snacks || []).map((id, i) => [`Перекус ${i + 1}`, id]),
+  ];
+  $("#dayModalBody").innerHTML = `
+    <p class="sk-meta">${day.cookHint || ""}</p>
+    <div class="sk-grid" id="day-meals"></div>`;
+  const box = $("#day-meals");
+  meals.forEach(([label, id]) => {
+    const d = dish(id);
+    if (!d) return;
+    const col = document.createElement("div");
+    col.className = "sk-col-12";
+    col.innerHTML = `<div class="sk-meal"><b>${label}</b><div><div style="font-weight:750">${dishIcon(d)} ${d.name}</div><div class="sk-meta">${d.timeMin} мин · ${d.category}</div></div><div class="price">~${rub(d.costPerServing)}</div></div>`;
+    col.querySelector(".sk-meal").onclick = () => {
+      $("#dayModal")?.classList.remove("show");
+      openRecipe(d.id);
+    };
+    box.appendChild(col);
+  });
+  $("#dayModal")?.classList.add("show");
+}
+
 function renderMonthCalendar(rootSel, plan) {
   const box = $(rootSel);
   if (!box) return;
@@ -216,11 +272,13 @@ function renderMonthCalendar(rootSel, plan) {
   const y = state._calY ?? now.getFullYear();
   const m = state._calM ?? now.getMonth();
   const first = new Date(y, m, 1);
-  const startPad = (first.getDay() + 6) % 7; // Mon=0
+  const startPad = (first.getDay() + 6) % 7;
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const byDate = Object.fromEntries((plan || []).filter((d) => d.date).map((d) => [d.date, d]));
+  const range = planDateRange(plan);
   const monthName = first.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
   box.innerHTML = `
+    <div class="sk-ok" style="margin-bottom:10px">Меню покрывает <b>${range.count}</b> дн.${range.from && range.to ? `: с <b>${range.from}</b> по <b>${range.to}</b>` : ""}. Нажмите день — меню дня.</div>
     <div class="sk-row" style="justify-content:space-between;margin-bottom:8px">
       <button class="sk-btn sk-btn-ghost" id="cal-prev" style="min-height:40px">←</button>
       <strong style="text-transform:capitalize">${monthName}</strong>
@@ -237,13 +295,12 @@ function renderMonthCalendar(rootSel, plan) {
     const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     const el = document.createElement("div");
     const isToday = iso === now.toISOString().slice(0, 10);
-    const has = !!byDate[iso];
+    const day = byDate[iso];
+    const has = !!day;
     el.className = `cal-cell ${isToday ? "today" : ""} ${has ? "has" : ""}`;
-    el.innerHTML = `<b>${d}</b>${has ? `<div class="sk-meta">${byDate[iso].dayName || ""}</div>` : ""}`;
-    if (has) el.onclick = () => {
-      state._focusDate = iso;
-      renderPlan();
-    };
+    const dinnerName = has && dish(day.dinner) ? dish(day.dinner).name.split(" ").slice(0, 2).join(" ") : "";
+    el.innerHTML = `<b>${d}</b>${has ? `<div class="sk-meta">${dinnerName || "меню"}</div>` : ""}`;
+    if (has) el.onclick = () => openDayModal(day);
     daysBox.appendChild(el);
   }
   $("#cal-prev").onclick = () => {
@@ -694,7 +751,7 @@ function bindRecipeActions(d, root) {
       }
     }
     ensureStockUi().onCooked(d, form);
-    state.events.push(makeEvent({ type: "cook", recipeId: d.id, recipeName: d.name, items }));
+    state.events.push(makeEvent({ type: "cook", recipeId: d.id, recipeName: d.name, meal: form.meal, items }));
     await saveInventoryAndSync();
     toast("Списали продукты и добавили блюдо в запас");
   });
@@ -730,12 +787,19 @@ function destroyCharts() {
   state.charts = {};
 }
 
+function alcoholPlan(s) {
+  return s.alcoholBudget ?? (s.wineBudget || 0) + (s.ginBudget || 0);
+}
+function alcoholFact(b) {
+  return b.alcoholSpent ?? (b.wineSpent || 0) + (b.ginSpent || 0);
+}
+
 function renderStats() {
   destroyCharts();
   const root = $("#screen-stats");
   const fromDefault = dayjs().subtract(30, "day").format("YYYY-MM-DD");
   const toDefault = dayjs().format("YYYY-MM-DD");
-  const vis = state._statVis || { kpis: true, timeline: true, contours: true, products: true, cooks: true };
+  const vis = state._statVis || { kpis: true, timeline: true, contours: true, meals: true, products: true, cooks: true };
   root.innerHTML = `
     <div class="sk-card tone" style="margin-bottom:14px">
       <div class="sk-row">
@@ -746,8 +810,9 @@ function renderStats() {
       <div class="stats-toggles" id="stat-toggles">
         ${[
           ["kpis", "Сводка"],
-          ["timeline", "График дней"],
-          ["contours", "Контуры (готовка/вино/джин/вкусняшки)"],
+          ["timeline", "По дням"],
+          ["contours", "Контуры трат"],
+          ["meals", "Приёмы пищи"],
           ["products", "Товары"],
           ["cooks", "Готовки"],
         ]
@@ -757,12 +822,14 @@ function renderStats() {
           )
           .join("")}
       </div>
-      <p class="sk-meta">Контуры = статьи бюджета. Включайте только нужные блоки.</p>
+      <p class="sk-meta">Контуры: готовка · алкоголь (вино+джин) · вкусняшки · сладкое/к чаю · прочее (разовое без категории). Приёмы — из отметок «Приготовил».</p>
     </div>
     <div id="stat-kpis" class="sk-stat-row" style="${vis.kpis ? "" : "display:none"}"></div>
     <div class="sk-grid" style="margin-top:12px">
       <div class="sk-col-6" id="blk-timeline" style="${vis.timeline ? "" : "display:none"}"><div class="sk-card"><h3>Траты по дням</h3><div class="chart-box"><canvas id="chart-timeline"></canvas></div></div></div>
-      <div class="sk-col-6" id="blk-contours" style="${vis.contours ? "" : "display:none"}"><div class="sk-card"><h3>Контуры расходов</h3><p class="sk-meta">Готовка · Вино · Джин · Вкусняшки · Прочее</p><div class="chart-box"><canvas id="chart-cat"></canvas></div></div></div>
+      <div class="sk-col-6" id="blk-contours" style="${vis.contours ? "" : "display:none"}"><div class="sk-card"><h3>Контуры расходов</h3><p class="sk-meta">Куда уходят деньги</p><div class="chart-box"><canvas id="chart-cat"></canvas></div><div id="cat-legend" class="sk-meta" style="margin-top:8px"></div></div></div>
+      <div class="sk-col-6" id="blk-meals" style="${vis.meals ? "" : "display:none"}"><div class="sk-card"><h3>Приёмы пищи</h3><p class="sk-meta">Сколько раз готовили · ₽ по приёму (если отмечено)</p><div class="chart-box"><canvas id="chart-meals"></canvas></div></div></div>
+      <div class="sk-col-6" id="blk-meal-spend" style="${vis.meals ? "" : "display:none"}"><div class="sk-card"><h3>Готовка по приёмам ₽</h3><div class="chart-box"><canvas id="chart-meal-spend"></canvas></div></div></div>
       <div class="sk-col-12" id="blk-products" style="${vis.products ? "" : "display:none"}"><div class="sk-card"><h3>Популярные товары</h3><div style="overflow:auto"><table class="sk-table" id="pop-table"><thead><tr><th>#</th><th>Товар</th><th>Раз</th><th>Кол-во</th><th>Сумма</th></tr></thead><tbody></tbody></table></div></div></div>
       <div class="sk-col-12" id="blk-cooks" style="${vis.cooks ? "" : "display:none"}"><div class="sk-card"><h3>Последние готовки</h3><div id="cook-list"></div></div></div>
     </div>`;
@@ -782,14 +849,17 @@ function renderStats() {
     const ev = filterEvents(state.events, state._statFrom, state._statTo);
     const pop = popularProducts(ev, state.cat.products, 20);
     const cats = spendByCategory(ev);
+    const meals = cooksByMeal(ev);
     const timeline = spendTimeline(ev, state._statFrom, state._statTo);
     const sum = totalSpend(ev);
-    const cooks = ev.filter((e) => e.type === "cook").slice(-15).reverse();
+    const cookEv = ev.filter((e) => e.type === "cook");
+    const cooks = cookEv.slice(-15).reverse();
     if ($("#stat-kpis")) {
       $("#stat-kpis").innerHTML = `
         <div class="sk-stat"><span class="sk-meta">Всего ₽</span><b>${rub(sum)}</b></div>
         <div class="sk-stat"><span class="sk-meta">Покупок</span><b>${ev.filter((e) => e.type === "spend").length}</b></div>
-        <div class="sk-stat"><span class="sk-meta">Готовок</span><b>${cooks.length}</b></div>`;
+        <div class="sk-stat"><span class="sk-meta">Готовок</span><b>${cookEv.length}</b></div>
+        <div class="sk-stat"><span class="sk-meta">Алкоголь</span><b>${rub(cats.alcohol)}</b></div>`;
     }
     if (vis.timeline && $("#chart-timeline")) {
       state.charts.timeline = new Chart($("#chart-timeline"), {
@@ -802,13 +872,42 @@ function renderStats() {
       });
     }
     if (vis.contours && $("#chart-cat")) {
+      const keys = ["cooking", "alcohol", "treats", "sweet", "other"];
+      const colors = ["#1f3a56", "#8b3a3a", "#2f6b4f", "#c8892a", "#9aa4b2"];
       state.charts.cat = new Chart($("#chart-cat"), {
         type: "doughnut",
         data: {
-          labels: ["Готовка", "Вино", "Джин", "Вкусняшки", "Прочее"],
-          datasets: [{ data: [cats.cooking, cats.wine, cats.gin, cats.treats, cats.other], backgroundColor: ["#1f3a56", "#c8892a", "#5c6673", "#2f6b4f", "#c5ced8"] }],
+          labels: keys.map((k) => SPEND_LABELS[k]),
+          datasets: [{ data: keys.map((k) => cats[k] || 0), backgroundColor: colors }],
         },
         options: { responsive: true, maintainAspectRatio: false },
+      });
+      if ($("#cat-legend")) {
+        $("#cat-legend").innerHTML = keys
+          .map((k) => `<div><b>${SPEND_LABELS[k]}</b> — ${rub(cats[k] || 0)}</div>`)
+          .join("");
+      }
+    }
+    if (vis.meals && $("#chart-meals")) {
+      const mKeys = ["breakfast", "lunch", "dinner", "snack"];
+      state.charts.meals = new Chart($("#chart-meals"), {
+        type: "bar",
+        data: {
+          labels: mKeys.map((k) => SPEND_LABELS[k]),
+          datasets: [{ label: "раз", data: mKeys.map((k) => meals[k] || 0), backgroundColor: "#1f3a56" }],
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } },
+      });
+    }
+    if (vis.meals && $("#chart-meal-spend")) {
+      const mKeys = ["breakfast", "lunch", "dinner", "snack"];
+      state.charts.mealSpend = new Chart($("#chart-meal-spend"), {
+        type: "bar",
+        data: {
+          labels: mKeys.map((k) => SPEND_LABELS[k]),
+          datasets: [{ label: "₽", data: mKeys.map((k) => cats[k] || 0), backgroundColor: "#2f6b4f" }],
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
       });
     }
     if ($("#pop-table tbody")) {
@@ -817,8 +916,14 @@ function renderStats() {
         `<tr><td colspan="5" class="sk-meta">Нет данных</td></tr>`;
     }
     if ($("#cook-list")) {
+      const mealLab = SPEND_LABELS;
       $("#cook-list").innerHTML = cooks.length
-        ? cooks.map((c) => `<div class="shop-item"><div style="flex:1"><b>${c.recipeName || c.recipeId}</b><div class="sk-meta">${dayjs(c.at).format("D MMM HH:mm")}</div></div></div>`).join("")
+        ? cooks
+            .map(
+              (c) =>
+                `<div class="shop-item"><div style="flex:1"><b>${c.recipeName || c.recipeId}</b><div class="sk-meta">${dayjs(c.at).format("D MMM HH:mm")}${c.meal ? ` · ${mealLab[c.meal] || c.meal}` : ""}</div></div></div>`
+            )
+            .join("")
         : `<div class="sk-meta">Пока нет отметок «Приготовил»</div>`;
     }
   };
@@ -831,9 +936,10 @@ function purchasesFact() {
   const cats = spendByCategory(state.events || []);
   return {
     cooking: cats.cooking || 0,
-    wine: cats.wine || 0,
-    gin: cats.gin || 0,
+    alcohol: cats.alcohol || 0,
     treats: cats.treats || 0,
+    sweet: cats.sweet || 0,
+    other: cats.other || 0,
   };
 }
 
@@ -842,16 +948,20 @@ function renderBudget() {
   const s = state.settings;
   const b = state.budget;
   const fromPurchases = purchasesFact();
-  const totalPlan = s.cookingBudget + s.wineBudget + s.ginBudget + s.treatsBudget;
-  const totalFact = (b.cookingSpent || 0) + (b.wineSpent || 0) + (b.ginSpent || 0) + (b.treatsSpent || 0);
+  const aPlan = alcoholPlan(s);
+  const aFact = alcoholFact(b);
+  const sweetPlan = s.sweetBudget || 0;
+  const sweetFact = b.sweetSpent || 0;
+  const totalPlan = (s.cookingBudget || 0) + aPlan + (s.treatsBudget || 0) + sweetPlan;
+  const totalFact = (b.cookingSpent || 0) + aFact + (b.treatsSpent || 0) + sweetFact;
   root.innerHTML = `
     <div class="sk-stat-row">
       <div class="sk-stat"><span class="sk-meta">План месяца</span><b>${rub(totalPlan)}</b></div>
       <div class="sk-stat"><span class="sk-meta">Факт (ledger)</span><b>${rub(totalFact)}</b></div>
-      <div class="sk-stat"><span class="sk-meta">Из покупок (события)</span><b>${rub(fromPurchases.cooking + fromPurchases.wine + fromPurchases.gin + fromPurchases.treats)}</b></div>
+      <div class="sk-stat"><span class="sk-meta">Из покупок</span><b>${rub(fromPurchases.cooking + fromPurchases.alcohol + fromPurchases.treats + fromPurchases.sweet)}</b></div>
     </div>
     <div class="sk-card" style="margin-bottom:12px">
-      <p class="sk-meta">Факт можно подтянуть из отмеченных покупок (цена при галочке в «Покупки») и потом поправить вручную.</p>
+      <p class="sk-meta">Алкоголь = вино + джин одной статьёй. Сладкое/к чаю — отдельно от вкусняшек. Факт тянется из цен при галочке в «Покупки».</p>
       <button class="sk-btn sk-btn-accent" id="pull-purchases">Подтянуть факт из покупок</button>
     </div>
     <div class="sk-card">
@@ -859,9 +969,9 @@ function renderBudget() {
         <thead><tr><th>Статья</th><th>План</th><th>Факт</th><th>Из покупок</th><th>+ корректировка</th></tr></thead>
         <tbody>
           <tr><td>Готовка</td><td>${rub(s.cookingBudget)}</td><td>${rub(b.cookingSpent)}</td><td>${rub(fromPurchases.cooking)}</td><td><input class="sk-input" type="number" id="add-cooking" /></td></tr>
-          <tr><td>Вино</td><td>${rub(s.wineBudget)}</td><td>${rub(b.wineSpent)}</td><td>${rub(fromPurchases.wine)}</td><td><input class="sk-input" type="number" id="add-wine" /></td></tr>
-          <tr><td>Джин</td><td>${rub(s.ginBudget)}</td><td>${rub(b.ginSpent)}</td><td>${rub(fromPurchases.gin)}</td><td><input class="sk-input" type="number" id="add-gin" /></td></tr>
+          <tr><td>Алкоголь</td><td>${rub(aPlan)}</td><td>${rub(aFact)}</td><td>${rub(fromPurchases.alcohol)}</td><td><input class="sk-input" type="number" id="add-alcohol" /></td></tr>
           <tr><td>Вкусняшки</td><td>${rub(s.treatsBudget)}</td><td>${rub(b.treatsSpent)}</td><td>${rub(fromPurchases.treats)}</td><td><input class="sk-input" type="number" id="add-treats" /></td></tr>
+          <tr><td>Сладкое / к чаю</td><td>${rub(sweetPlan)}</td><td>${rub(sweetFact)}</td><td>${rub(fromPurchases.sweet)}</td><td><input class="sk-input" type="number" id="add-sweet" /></td></tr>
         </tbody>
       </table>
       <div class="sk-row" style="margin-top:12px">
@@ -871,9 +981,11 @@ function renderBudget() {
     </div>`;
   $("#pull-purchases").onclick = async () => {
     state.budget.cookingSpent = fromPurchases.cooking;
-    state.budget.wineSpent = fromPurchases.wine;
-    state.budget.ginSpent = fromPurchases.gin;
+    state.budget.alcoholSpent = fromPurchases.alcohol;
     state.budget.treatsSpent = fromPurchases.treats;
+    state.budget.sweetSpent = fromPurchases.sweet;
+    state.budget.wineSpent = 0;
+    state.budget.ginSpent = 0;
     await persistLocal();
     toast("Факт = сумма покупок из журнала");
     renderBudget();
@@ -886,9 +998,9 @@ function renderBudget() {
       state.events.push(makeEvent({ type: "spend", category, total: v, items: [] }));
     };
     await add("#add-cooking", "cookingSpent", "cooking");
-    await add("#add-wine", "wineSpent", "wine");
-    await add("#add-gin", "ginSpent", "gin");
+    await add("#add-alcohol", "alcoholSpent", "alcohol");
     await add("#add-treats", "treatsSpent", "treats");
+    await add("#add-sweet", "sweetSpent", "sweet");
     await persistLocal();
     toast("Корректировка сохранена");
     renderBudget();
@@ -976,6 +1088,14 @@ async function boot() {
   $("#modal-close")?.addEventListener("click", closeRecipeModal);
   $("#recipeModal")?.addEventListener("click", (e) => {
     if (e.target.id === "recipeModal") closeRecipeModal();
+  });
+  $("#product-modal-close")?.addEventListener("click", () => ensureStockUi().closeProductModal());
+  $("#productModal")?.addEventListener("click", (e) => {
+    if (e.target.id === "productModal") ensureStockUi().closeProductModal();
+  });
+  $("#day-modal-close")?.addEventListener("click", () => $("#dayModal")?.classList.remove("show"));
+  $("#dayModal")?.addEventListener("click", (e) => {
+    if (e.target.id === "dayModal") $("#dayModal")?.classList.remove("show");
   });
 
   $$("#nav-list [data-screen]").forEach((b) => {
