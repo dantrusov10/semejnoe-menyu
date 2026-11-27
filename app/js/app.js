@@ -181,7 +181,6 @@ function updateSyncBadge() {
   });
 }
 
-const PRIMARY_TABS = new Set(["today", "plan", "inventory", "basket"]);
 const MORE_SCREENS = new Set(["period", "recipes", "stats", "budget", "sync"]);
 
 function closeMoreSheet() {
