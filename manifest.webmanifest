@@ -3,7 +3,7 @@
   "name": "Семейная кухня · Богданиха",
   "short_name": "Кухня",
   "description": "Меню, запасы, покупки и бюджет семьи",
-  "start_url": "./?v=14",
+  "start_url": "./?v=15",
   "scope": "./",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
