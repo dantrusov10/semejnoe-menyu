@@ -51,8 +51,10 @@ function extractJson(text) {
 async function callGemini(env, { system, user, imageBase64, mimeType }) {
   const key = env.GEMINI_API_KEY;
   if (!key) return null;
-  const model = imageBase64 ? "gemini-2.0-flash" : "gemini-2.0-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  // 2.0/2.5 flash закрыты для новых ключей; 3.x flash часто 503 — берём lite + fallback.
+  const models = imageBase64
+    ? ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash"]
+    : ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash"];
   const parts = [];
   if (system) parts.push({ text: system });
   if (imageBase64) {
@@ -64,20 +66,28 @@ async function callGemini(env, { system, user, imageBase64, mimeType }) {
     });
   }
   parts.push({ text: typeof user === "string" ? user : JSON.stringify(user) });
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
-    }),
+  const payload = JSON.stringify({
+    contents: [{ role: "user", parts }],
+    generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
   });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Gemini ${res.status}: ${err.slice(0, 200)}`);
+  let lastErr = "Gemini unavailable";
+  for (const model of models) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload,
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      lastErr = `Gemini ${model} ${res.status}: ${err.slice(0, 160)}`;
+      if (res.status === 404 || res.status === 503 || res.status === 429) continue;
+      throw new Error(lastErr);
+    }
+    const data = await res.json();
+    return data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("\n") || "";
   }
-  const data = await res.json();
-  return data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("\n") || "";
+  throw new Error(lastErr);
 }
 
 async function callWorkersAi(env, prompt) {

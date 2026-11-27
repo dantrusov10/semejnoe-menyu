@@ -6,8 +6,8 @@
 
 | Задача | Провайдер | Секрет / binding |
 |--------|-----------|------------------|
-| Умные замены (текст) | Gemini 2.0 Flash **или** Workers AI Llama | `GEMINI_API_KEY` и/или `[ai] binding = "AI"` |
-| Фото полки | Gemini 2.0 Flash (vision) | `GEMINI_API_KEY` |
+| Умные замены (текст) | Gemini 3.5 Flash Lite (+ fallback) **или** Workers AI Llama | `GEMINI_API_KEY` и/или `[ai] binding = "AI"` |
+| Фото полки | Gemini 3.5 Flash Lite (vision) | `GEMINI_API_KEY` |
 
 Ключ Gemini: https://aistudio.google.com/apikey (бесплатный tier).
 

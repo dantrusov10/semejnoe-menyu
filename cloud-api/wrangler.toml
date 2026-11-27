@@ -4,8 +4,8 @@ compatibility_date = "2024-11-01"
 
 [[kv_namespaces]]
 binding = "STORE"
-id = "24b572118b0e446e8af14be7e9c310dd"
-preview_id = "dd146198043c4302bf1347f81c850ef2"
+id = "db136e33842943e2bfd75f1a98178b5f"
+preview_id = "236a9fb1e65d410ba05bc1033d0fb010"
 
 [ai]
 binding = "AI"
