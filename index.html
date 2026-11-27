@@ -15,7 +15,7 @@
 </head>
 <body>
   <div class="sk-layout">
-    <aside class="sk-side">
+    <aside class="sk-side" id="side-nav">
       <div class="sk-side-brand">
         <span>Богданиха</span>
         Семейная кухня
@@ -38,10 +38,12 @@
 
     <div class="sk-shell">
       <header class="sk-top">
-        <div>
-          <h1 class="sk-brand" id="page-title">План</h1>
-          <p class="sk-lead" id="page-lead">Меню на дни, календарь и быстрые действия.</p>
+        <div class="sk-top-text">
+          <p class="sk-top-eyebrow">Богданиха</p>
+          <h1 class="sk-brand" id="page-title">Сегодня</h1>
+          <p class="sk-lead" id="page-lead">Что едим, что готово, чего не хватает.</p>
         </div>
+        <span class="sk-pill sk-pill-mobile" id="sync-badge-mobile">облако</span>
       </header>
 
       <main>
@@ -86,6 +88,28 @@
       <div id="cookModalBody"></div>
     </div>
   </div>
+  <nav class="sk-tabbar" id="tabbar" aria-label="Главное меню">
+    <button type="button" data-screen="today" class="active">Сегодня</button>
+    <button type="button" data-screen="plan">План</button>
+    <button type="button" data-screen="inventory">Запасы</button>
+    <button type="button" data-screen="basket">Покупки</button>
+    <button type="button" data-more>Ещё</button>
+  </nav>
+
+  <div class="sk-more" id="more-sheet" hidden>
+    <button type="button" class="sk-more-backdrop" data-close-more aria-label="Закрыть"></button>
+    <div class="sk-more-card" role="dialog" aria-label="Другие разделы">
+      <div class="sk-more-handle"></div>
+      <p class="sk-more-title">Ещё</p>
+      <button type="button" data-screen="period">Период</button>
+      <button type="button" data-screen="recipes">Рецепты</button>
+      <button type="button" data-screen="stats">Статистика</button>
+      <button type="button" data-screen="budget">Бюджет</button>
+      <button type="button" data-screen="sync">Облако</button>
+      <button type="button" class="sk-btn sk-btn-ghost sk-btn-block" data-close-more style="margin-top:8px">Закрыть</button>
+    </div>
+  </div>
+
   <div class="sk-toast" id="toast" role="status"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>

@@ -170,15 +170,34 @@ function dish(id) {
 }
 
 function updateSyncBadge() {
-  const el = $("#sync-badge");
-  if (!el) return;
-  if (state.syncError) {
-    el.textContent = "офлайн";
-    el.className = "sk-pill";
-    return;
-  }
-  el.textContent = state.syncAt ? `облако ${dayjs(state.syncAt).format("HH:mm")}` : "облако";
-  el.className = "sk-pill ok";
+  const els = [$("#sync-badge"), $("#sync-badge-mobile")].filter(Boolean);
+  if (!els.length) return;
+  const offline = !!state.syncError;
+  const text = offline ? "офлайн" : state.syncAt ? `облако ${dayjs(state.syncAt).format("HH:mm")}` : "облако";
+  const cls = offline ? "sk-pill" : "sk-pill ok";
+  els.forEach((el) => {
+    el.textContent = text;
+    el.className = el.id === "sync-badge-mobile" ? `${cls} sk-pill-mobile` : cls;
+  });
+}
+
+const PRIMARY_TABS = new Set(["today", "plan", "inventory", "basket"]);
+const MORE_SCREENS = new Set(["period", "recipes", "stats", "budget", "sync"]);
+
+function closeMoreSheet() {
+  $("#more-sheet")?.setAttribute("hidden", "");
+}
+
+function openMoreSheet() {
+  $("#more-sheet")?.removeAttribute("hidden");
+}
+
+function syncNavUi(name) {
+  $$("#nav-list [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
+  $$("#tabbar [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
+  const moreBtn = $("#tabbar [data-more]");
+  if (moreBtn) moreBtn.classList.toggle("active", MORE_SCREENS.has(name));
+  $$("#more-sheet [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
 }
 
 async function syncPull(preferCloud = true) {
@@ -231,11 +250,17 @@ const PAGE_META = {
 
 function setScreen(name) {
   state.screen = name;
-  $$("#nav-list [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
+  closeMoreSheet();
+  syncNavUi(name);
   $$(".sk-panel").forEach((p) => p.classList.toggle("active", p.id === `screen-${name}`));
   const meta = PAGE_META[name] || [name, ""];
   if ($("#page-title")) $("#page-title").textContent = meta[0];
   if ($("#page-lead")) $("#page-lead").textContent = meta[1];
+  try {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  } catch {
+    window.scrollTo(0, 0);
+  }
   renderScreen();
 }
 
@@ -437,9 +462,9 @@ function renderToday() {
           <div style="font-weight:750">${dishIcon(d)} ${d.name}</div>
           <div class="sk-meta">${d.timeMin} мин · запасы ${Math.round(hint.coverage * 100)}%${warn ? ` · ${warn.text}` : ""}</div>
         </div>
-        <div class="sk-row" style="flex-direction:column;gap:4px">
-          <button class="sk-btn sk-btn-ghost" data-open style="min-height:36px">Рецепт</button>
-          <button class="sk-btn sk-btn-ghost" data-swap style="min-height:36px">Замена</button>
+        <div class="sk-meal-actions">
+          <button class="sk-btn sk-btn-ghost" data-open>Рецепт</button>
+          <button class="sk-btn sk-btn-ghost" data-swap>Замена</button>
         </div>`;
       row.querySelector("[data-open]").onclick = (e) => {
         e.stopPropagation();
@@ -1473,6 +1498,16 @@ async function boot() {
   });
 
   $$("#nav-list [data-screen]").forEach((b) => {
+    b.onclick = () => setScreen(b.dataset.screen);
+  });
+  $$("#tabbar [data-screen]").forEach((b) => {
+    b.onclick = () => setScreen(b.dataset.screen);
+  });
+  $("#tabbar [data-more]")?.addEventListener("click", () => openMoreSheet());
+  $$("#more-sheet [data-close-more]").forEach((b) => {
+    b.onclick = () => closeMoreSheet();
+  });
+  $$("#more-sheet [data-screen]").forEach((b) => {
     b.onclick = () => setScreen(b.dataset.screen);
   });
 

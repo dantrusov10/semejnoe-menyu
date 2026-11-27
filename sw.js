@@ -1,5 +1,5 @@
 /* Service worker: кэш оболочки + показ локальных уведомлений */
-const CACHE = "sk-shell-v1";
+const CACHE = "sk-shell-v2";
 const ASSETS = ["./", "./index.html", "./app/css/app.css", "./app/js/app.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
