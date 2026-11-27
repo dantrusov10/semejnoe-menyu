@@ -356,25 +356,30 @@ function bindEdgeSwipeDrawer() {
   );
 }
 
+function activateWaitingWorker(reg) {
+  const ban = $("#update-banner");
+  if (ban) ban.hidden = false;
+  // Автоприменение: иначе установленный ярлык остаётся на старом SW
+  reg?.waiting?.postMessage?.({ type: "SKIP_WAITING" });
+}
+
 function watchServiceWorkerUpdates() {
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.ready.then((reg) => {
-    const show = () => {
-      const ban = $("#update-banner");
-      if (ban) ban.hidden = false;
-    };
-    if (reg.waiting) show();
+    if (reg.waiting) activateWaitingWorker(reg);
     reg.addEventListener("updatefound", () => {
       const w = reg.installing;
       w?.addEventListener("statechange", () => {
-        if (w.state === "installed" && navigator.serviceWorker.controller) show();
+        if (w.state === "installed" && navigator.serviceWorker.controller) {
+          activateWaitingWorker(reg);
+        }
       });
     });
+    reg.update().catch(() => {});
   });
   $("#update-reload")?.addEventListener("click", async () => {
     const reg = await navigator.serviceWorker.getRegistration();
     reg?.waiting?.postMessage?.({ type: "SKIP_WAITING" });
-    // fallback: hard reload
     setTimeout(() => location.reload(), 120);
   });
   let refreshing = false;

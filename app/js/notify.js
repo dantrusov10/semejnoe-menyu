@@ -24,7 +24,16 @@ export async function ensureNotifyPermission() {
 export async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   try {
-    const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+    const reg = await navigator.serviceWorker.register("./sw.js", {
+      scope: "./",
+      updateViaCache: "none",
+    });
+    // Сразу тянем новый SW (иначе ярлык может жить на старом часами)
+    reg.update().catch(() => {});
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") reg.update().catch(() => {});
+    });
+    window.addEventListener("focus", () => reg.update().catch(() => {}));
     return reg;
   } catch {
     return null;

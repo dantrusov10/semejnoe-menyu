@@ -1,5 +1,5 @@
-/* Service worker: сеть первой для оболочки, кэш как запасной; локальные уведомления */
-const CACHE = "sk-shell-v12";
+/* Service worker: оболочка всегда с сети без HTTP-кэша; офлайн — из Cache Storage */
+const CACHE = "sk-shell-v13";
 const ASSETS = [
   "./",
   "./index.html",
@@ -11,12 +11,20 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS).catch(() => {})).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches
+      .open(CACHE)
+      .then((c) => c.addAll(ASSETS).catch(() => {}))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
@@ -24,41 +32,47 @@ self.addEventListener("message", (e) => {
   if (e.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
+function isShell(url) {
+  const p = url.pathname;
+  return (
+    p.endsWith(".js") ||
+    p.endsWith(".css") ||
+    p.endsWith(".html") ||
+    p.endsWith(".webmanifest") ||
+    p.endsWith("/") ||
+    p.endsWith("/semejnoe-menyu")
+  );
+}
+
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== self.location.origin) return;
   if (e.request.method !== "GET") return;
 
-  const shell =
-    url.pathname.endsWith(".js") ||
-    url.pathname.endsWith(".css") ||
-    url.pathname.endsWith(".html") ||
-    url.pathname.endsWith(".webmanifest") ||
-    url.pathname.endsWith("/") ||
-    url.pathname.endsWith("/semejnoe-menyu");
-
-  if (shell) {
+  if (isShell(url) || e.request.mode === "navigate") {
     e.respondWith(
-      fetch(e.request)
+      fetch(e.request, { cache: "no-store" })
         .then((res) => {
           if (res.ok) {
             const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(e.request, copy));
+            caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
           }
           return res;
         })
-        .catch(() => caches.match(e.request))
+        .catch(() =>
+          caches.match(e.request).then((hit) => hit || caches.match("./index.html") || caches.match("./"))
+        )
     );
     return;
   }
 
   e.respondWith(
     caches.match(e.request).then((hit) => {
-      const net = fetch(e.request)
+      const net = fetch(e.request, { cache: "no-store" })
         .then((res) => {
           if (res.ok) {
             const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(e.request, copy));
+            caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
           }
           return res;
         })
