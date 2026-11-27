@@ -214,6 +214,71 @@ export function violatesHardConstraints(dish, settings) {
 }
 
 /**
+ * Пометки для дочки: block | warn | ok
+ * Показываем на рецепте / Сегодня.
+ */
+export function childNotes(dish, settings) {
+  if (!dish) return [];
+  const r = settings?.childRules || {};
+  const tags = new Set(dish.tags || []);
+  const name = (dish.name || "").toLowerCase();
+  const ids = new Set((dish.ingredients || []).map((i) => i.id));
+  const out = [];
+  if (r.noNuts !== false && (tags.has("орехи") || ids.has("nuts") || name.includes("орех"))) {
+    out.push({ level: "block", text: "Орехи — дочке не давать" });
+  }
+  if (r.noHoney !== false && (ids.has("honey_adult") || name.includes("мёд") || name.includes("мед"))) {
+    out.push({ level: "warn", text: "Мёд — только взрослым, дочке без мёда" });
+  }
+  if (r.noSugar !== false && (ids.has("sugar") || tags.has("сладкое") || name.includes("сахар"))) {
+    out.push({ level: "warn", text: "Сахар / сладкое — дочке без сахара или минимально" });
+  }
+  if (r.fishBonelessOnly !== false && (dish.protein === "рыба" || name.includes("рыб") || name.includes("минтай") || name.includes("филе"))) {
+    out.push({ level: "ok", text: "Рыба — только без костей / филе" });
+  }
+  if (r.mildSalt !== false) out.push({ level: "ok", text: "Соль умеренно для дочки" });
+  if (r.mildSpice !== false) out.push({ level: "ok", text: "Специи аккуратно" });
+  if (dish.child) out.push({ level: "info", text: dish.child });
+  return out;
+}
+
+/** Баланс белка по плану */
+export function proteinBalance(plan, dishes) {
+  const out = { chicken: 0, pork: 0, beef: 0, fish: 0, other: 0, none: 0 };
+  for (const day of plan || []) {
+    for (const key of ["breakfast", "lunch", "dinner"]) {
+      const d = dishes[day[key]];
+      if (!d) continue;
+      const p = (d.protein || "").toLowerCase();
+      if (p.includes("кур") || p.includes("птиц")) out.chicken += 1;
+      else if (p.includes("свин")) out.pork += 1;
+      else if (p.includes("говяд") || p.includes("телят")) out.beef += 1;
+      else if (p.includes("рыб")) out.fish += 1;
+      else if (p.includes("без") || p.includes("веге")) out.none += 1;
+      else out.other += 1;
+    }
+  }
+  return out;
+}
+
+/** Дни готовки vs разогрев: cookHint + batchDays */
+export function markBatchHints(plan, dishes) {
+  return (plan || []).map((day, i) => {
+    const dinner = dishes[day.dinner];
+    const batch = dinner?.batchDays || 1;
+    const isCookDay = i % Math.max(1, batch) === 0 || i === 0;
+    return {
+      ...day,
+      cookHint: isCookDay
+        ? `День варки · ${daysRu(batch)}`
+        : `Разогрев / из готового · ${dinner?.name ? dinner.name.split(" ").slice(0, 3).join(" ") : ""}`,
+      batchDays: batch,
+      isCookDay,
+    };
+  });
+}
+
+/**
  * Подбор блюд из запасов.
  * inventory: { [productId]: number }
  */

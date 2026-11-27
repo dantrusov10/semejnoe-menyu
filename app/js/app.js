@@ -20,8 +20,12 @@ import {
   banForMonth,
   familyServings,
   suggestReplacements,
+  childNotes,
+  proteinBalance,
+  markBatchHints,
+  recipeStockHint,
 } from "./engine.js";
-import { normalizeInventory, invAmount, setInvAmount } from "./inventory.js";
+import { normalizeInventory, invAmount, setInvAmount, inventoryAmounts, expiryStatus } from "./inventory.js";
 import { createStockUi } from "./stock-ui.js";
 import { dishIcon } from "./icons.js";
 import {
@@ -41,8 +45,12 @@ import {
   totalSpend,
   cooksByMeal,
   SPEND_LABELS,
+  monthForecast,
+  topExpensiveProducts,
+  stockCoverageShare,
   dayjs,
 } from "./stats.js";
+import { initReminders, ensureNotifyPermission, maybeEveningReminder } from "./notify.js";
 
 const state = {
   data: null,
@@ -117,6 +125,12 @@ function mergeCustomProducts() {
     if (m.category != null) p.category = m.category;
     if (m.brand != null) p.brand = m.brand;
     if (m.photo != null) p.photo = m.photo;
+  }
+  if (!Array.isArray(state.settings.customDishes)) state.settings.customDishes = [];
+  for (const d of state.settings.customDishes) {
+    if (!d?.id) continue;
+    state.cat.dishes[d.id] = d;
+    if (!state.data.dishes.find((x) => x.id === d.id)) state.data.dishes.push(d);
   }
 }
 
@@ -203,18 +217,18 @@ async function saveInventoryAndSync() {
 }
 
 const PAGE_META = {
-  plan: ["План", "Календарь и меню по дням — сегодня сверху."],
-  period: ["Период", "Собрать меню на N дней с разнообразием."],
-  inventory: ["Запасы", "Продукты и готовые блюда."],
-  basket: ["Покупки", "Единый список: из плана и руками. Цена — при покупке."],
-  recipes: ["Рецепты", "Поиск и фильтры по типу, белку, времени."],
-  stats: ["Статистика", "Что показывать — включаете сами."],
-  budget: ["Бюджет", "Факт из покупок + ручная корректировка."],
-  sync: ["Облако", "Синхронизация семьи."],
+  today: ["Сегодня", "Что едим, что готово, чего не хватает."],
+  plan: ["План", "Календарь и меню по дням."],
+  period: ["Период", "Собрать меню на N дней с разнообразием и лимитом."],
+  inventory: ["Запасы", "Продукты, готовые блюда, что приготовить из сроков."],
+  basket: ["Покупки", "Список, шаблоны, шаринг. Цена — при покупке."],
+  recipes: ["Рецепты", "Поиск, своё блюдо, любимое → неделя."],
+  stats: ["Статистика", "Категории, приёмы, товары, покрытие запасами."],
+  budget: ["Бюджет", "Факт + прогноз до конца месяца."],
+  sync: ["Облако", "Синхронизация и напоминания."],
 };
 
 function setScreen(name) {
-  if (name === "today") name = "plan";
   state.screen = name;
   $$("#nav-list [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
   $$(".sk-panel").forEach((p) => p.classList.toggle("active", p.id === `screen-${name}`));
@@ -226,7 +240,7 @@ function setScreen(name) {
 
 function renderScreen() {
   ({
-    today: renderPlan,
+    today: renderToday,
     plan: renderPlan,
     period: renderPeriod,
     inventory: renderInventory,
@@ -236,6 +250,26 @@ function renderScreen() {
     budget: renderBudget,
     sync: renderSync,
   })[state.screen]?.();
+}
+
+function budgetPlanTotal() {
+  const s = state.settings;
+  return (s.cookingBudget || 0) + alcoholPlan(s) + (s.treatsBudget || 0) + (s.sweetBudget || 0);
+}
+
+function mealStockActive() {
+  return (state.settings.mealStock || []).filter((m) => (m.portions || 0) > 0);
+}
+
+async function eatMealPortion(mealId) {
+  const meals = state.settings.mealStock || [];
+  const m = meals.find((x) => x.id === mealId);
+  if (!m) return;
+  m.portions = (m.portions || 1) - 1;
+  if (m.portions <= 0) state.settings.mealStock = meals.filter((x) => x.id !== mealId);
+  await persistLocal();
+  toast("Съели порцию из готового");
+  renderScreen();
 }
 
 /** Категория «без мяса» = category ИЛИ protein ИЛИ веге-тег */
@@ -350,18 +384,111 @@ async function swapMeal(dayIndex, mealKey) {
   renderScreen();
 }
 
-/* ——— PLAN (сегодня + календарь + дни) ——— */
-function renderPlan() {
-  const root = $("#screen-plan");
-  const cost = estimatePlanCost(state.plan, state.cat.dishes);
+/* ——— TODAY (кухонный режим) ——— */
+function renderToday() {
+  const root = $("#screen-today");
   const idx = planDayIndex(state.plan);
   const today = state.plan[idx];
+  const amt = inventoryAmounts(state.inventory);
+  const meals = mealStockActive();
+  const fc = monthForecast(state.events, budgetPlanTotal());
+  const labels = { breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин" };
+
+  root.innerHTML = `
+    <div class="sk-forecast">
+      <div><div class="sk-meta">Месяц сейчас</div><div class="sk-kpi" style="font-size:1.35rem">${rub(fc.spent)}</div></div>
+      <div><div class="sk-meta">Прогноз к концу</div><div class="sk-kpi" style="font-size:1.35rem;color:${fc.over ? "var(--hot)" : "inherit"}">${rub(fc.projected)}</div></div>
+      <div><div class="sk-meta">Лимит / день</div><div class="sk-kpi" style="font-size:1.2rem">${rub(fc.dailyCap)}</div></div>
+    </div>
+    <div class="sk-card tone" style="margin-bottom:14px">
+      <div class="sk-row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h2 style="margin:0">${today ? today.label || today.dayName : "Нет плана"}</h2>
+        <button class="sk-btn sk-btn-ghost" id="td-to-plan" style="min-height:40px">Весь план</button>
+      </div>
+      <p class="sk-meta">${today?.cookHint || "Соберите период или шаблон недели"}</p>
+      <div id="td-meals"></div>
+    </div>
+    <div class="sk-card" style="margin-bottom:14px" id="td-batch">
+      <h3 style="margin-top:0">Готовое в холодильнике</h3>
+      <div id="td-meals-stock"></div>
+    </div>
+    <div class="sk-row">
+      <button class="sk-btn sk-btn-accent" id="td-basket">Покупки</button>
+      <button class="sk-btn sk-btn-ghost" id="td-inv">Запасы</button>
+      <button class="sk-btn sk-btn-ghost" id="td-period">Период</button>
+    </div>`;
+
+  const box = $("#td-meals");
+  if (today) {
+    ["breakfast", "lunch", "dinner"].forEach((key) => {
+      const d = dish(today[key]);
+      if (!d) return;
+      const hint = recipeStockHint(d, amt, state.cat.products);
+      const notes = childNotes(d, state.settings);
+      const warn = notes.find((n) => n.level === "block" || n.level === "warn");
+      const row = document.createElement("div");
+      row.className = "sk-meal";
+      row.style.marginTop = "10px";
+      row.innerHTML = `
+        <b>${labels[key]}</b>
+        <div>
+          <div style="font-weight:750">${dishIcon(d)} ${d.name}</div>
+          <div class="sk-meta">${d.timeMin} мин · запасы ${Math.round(hint.coverage * 100)}%${warn ? ` · ${warn.text}` : ""}</div>
+        </div>
+        <div class="sk-row" style="flex-direction:column;gap:4px">
+          <button class="sk-btn sk-btn-ghost" data-open style="min-height:36px">Рецепт</button>
+          <button class="sk-btn sk-btn-ghost" data-swap style="min-height:36px">Замена</button>
+        </div>`;
+      row.querySelector("[data-open]").onclick = (e) => {
+        e.stopPropagation();
+        openRecipe(d.id);
+      };
+      row.querySelector("[data-swap]").onclick = async (e) => {
+        e.stopPropagation();
+        await swapMeal(idx, key);
+      };
+      row.onclick = () => openRecipe(d.id);
+      box.appendChild(row);
+    });
+  } else {
+    box.innerHTML = `<div class="sk-note">Плана нет — откройте «Период» или «Рецепты».</div>`;
+  }
+
+  const stockBox = $("#td-meals-stock");
+  if (!meals.length) {
+    stockBox.innerHTML = `<div class="sk-meta">Пока пусто. После «Приготовил» блюдо появится здесь на ${daysRu(2)}–${daysRu(4)}.</div>`;
+  } else {
+    meals.forEach((m) => {
+      const st = expiryStatus(m.expiresAt);
+      const row = document.createElement("div");
+      row.className = `shop-item exp-${st}`;
+      row.innerHTML = `<div style="flex:1"><b>${m.name}</b><div class="sk-meta">${m.portions} порц · до ${m.expiresAt || "—"}</div></div>
+        <button class="sk-btn sk-btn-accent" data-eat style="min-height:40px">Съели 1</button>
+        ${m.recipeId ? `<button class="sk-btn sk-btn-ghost" data-rec style="min-height:40px">Рецепт</button>` : ""}`;
+      row.querySelector("[data-eat]").onclick = () => eatMealPortion(m.id);
+      row.querySelector("[data-rec]")?.addEventListener("click", () => openRecipe(m.recipeId));
+      stockBox.appendChild(row);
+    });
+  }
+
+  $("#td-to-plan").onclick = () => setScreen("plan");
+  $("#td-basket").onclick = () => setScreen("basket");
+  $("#td-inv").onclick = () => setScreen("inventory");
+  $("#td-period").onclick = () => setScreen("period");
+}
+
+/* ——— PLAN ——— */
+function renderPlan() {
+  const root = $("#screen-plan");
+  state.plan = markBatchHints(state.plan, state.cat.dishes);
+  const cost = estimatePlanCost(state.plan, state.cat.dishes);
+  const bal = proteinBalance(state.plan, state.cat.dishes);
   root.innerHTML = `
     <div class="sk-forecast">
       <div><div class="sk-meta">Прогноз плана</div><div class="sk-kpi">${rub(cost)}</div></div>
-      <div><div class="sk-meta">Дней в плане</div><div class="sk-kpi" style="font-size:1.2rem">${state.plan.length}</div></div>
+      <div><div class="sk-meta">Дней</div><div class="sk-kpi" style="font-size:1.2rem">${state.plan.length}</div></div>
+      <div><div class="sk-meta">Белок (приёмы)</div><div class="sk-meta">кур ${bal.chicken} · свин ${bal.pork} · гов ${bal.beef} · рыб ${bal.fish}</div></div>
     </div>
-    <div class="sk-card tone" style="margin-bottom:14px" id="today-block"></div>
     <div class="sk-card" style="margin-bottom:14px">
       <h3 style="margin-top:0">Календарь</h3>
       <div id="cal-wrap"></div>
@@ -369,50 +496,47 @@ function renderPlan() {
     <div class="sk-row">
       <button class="sk-btn sk-btn-accent" id="to-period">Собрать период</button>
       <button class="sk-btn sk-btn-ghost" id="to-basket-week">В покупки</button>
-      <button class="sk-btn sk-btn-ghost" id="to-recipes">Рецепты</button>
+      <button class="sk-btn sk-btn-ghost" id="to-today">Сегодня</button>
       <button class="sk-btn sk-btn-primary" id="gen-week">Шаблон недели</button>
+      <button class="sk-btn sk-btn-ghost" id="gen-loved">Из любимого</button>
     </div>
     <div class="sk-grid" id="plan-grid" style="margin-top:12px"></div>`;
-
-  if (today) {
-    $("#today-block").innerHTML = `
-      <div class="sk-row" style="justify-content:space-between;align-items:center;margin:0 0 8px">
-        <h2 style="margin:0">Сегодня · ${today.label || today.dayName}</h2>
-        <button class="sk-btn sk-btn-ghost" id="btn-swap-dinner" style="min-height:40px">Заменить ужин</button>
-      </div>
-      <p class="sk-meta">${today.cookHint || ""}</p>
-      <div class="sk-grid" id="today-meals"></div>`;
-    ["breakfast", "lunch", "dinner"].forEach((key) => {
-      const d = dish(today[key]);
-      if (!d) return;
-      const labels = { breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин" };
-      const col = document.createElement("div");
-      col.className = "sk-col-4";
-      col.innerHTML = `<div class="sk-meal"><b>${labels[key]}</b><div><div style="font-weight:750">${dishIcon(d)} ${d.name}</div><div class="sk-meta">${d.timeMin} мин · ${d.category}</div></div><div class="price">~${rub(d.costPerServing)}</div></div>`;
-      col.querySelector(".sk-meal").onclick = () => openRecipe(d.id);
-      $("#today-meals").appendChild(col);
-    });
-    $("#btn-swap-dinner").onclick = () => swapMeal(idx, "dinner");
-  }
 
   renderMonthCalendar("#cal-wrap", state.plan);
   $("#to-period").onclick = () => setScreen("period");
   $("#to-basket-week").onclick = () => setScreen("basket");
-  $("#to-recipes").onclick = () => setScreen("recipes");
+  $("#to-today").onclick = () => setScreen("today");
   $("#gen-week").onclick = async () => {
-    state.plan = draftWeekPlan(state.data, state.settings, state.weekNum);
+    state.plan = markBatchHints(draftWeekPlan(state.data, state.settings, state.weekNum), state.cat.dishes);
     await persistLocal();
     toast("Шаблон недели");
+    renderPlan();
+  };
+  $("#gen-loved").onclick = async () => {
+    const loved = (state.settings.loved || []).map((id) => state.cat.dishes[id]).filter(Boolean);
+    if (loved.length < 3) return toast("Добавьте хотя бы 3 любимых блюда");
+    let plan = draftWeekPlan(state.data, state.settings, state.weekNum);
+    const byType = { breakfast: loved.filter((d) => d.type === "breakfast"), soup: loved.filter((d) => d.type === "soup"), main: loved.filter((d) => d.type === "main") };
+    plan = plan.map((day, i) => ({
+      ...day,
+      breakfast: byType.breakfast[i % Math.max(1, byType.breakfast.length)]?.id || day.breakfast,
+      lunch: byType.soup[i % Math.max(1, byType.soup.length)]?.id || day.lunch,
+      dinner: byType.main[i % Math.max(1, byType.main.length)]?.id || day.dinner,
+    }));
+    state.plan = markBatchHints(plan, state.cat.dishes);
+    await persistLocal();
+    toast("Неделя из любимого");
     renderPlan();
   };
 
   const focus = state._focusDate;
   const grid = $("#plan-grid");
+  const todayIdx = planDayIndex(state.plan);
   state.plan.forEach((day, dayIdx) => {
     if (focus && day.date && day.date !== focus) return;
     const col = document.createElement("div");
     col.className = "sk-col-4";
-    const isToday = dayIdx === idx || day.date === new Date().toISOString().slice(0, 10);
+    const isToday = dayIdx === todayIdx || day.date === new Date().toISOString().slice(0, 10);
     col.innerHTML = `<div class="sk-card ${isToday ? "tone" : ""}"><div class="sk-row" style="margin:0 0 8px;justify-content:space-between"><h2 style="margin:0;font-size:1.1rem">${day.label || day.dayName}</h2><button class="sk-btn sk-btn-ghost" data-swap style="min-height:40px">Не хочу ужин</button></div><div data-meals></div></div>`;
     const mealsBox = col.querySelector("[data-meals]");
     ["breakfast", "lunch", "dinner"].forEach((key) => {
@@ -485,6 +609,34 @@ function renderRecipes() {
   const proteins = [...new Set(state.data.dishes.map((d) => d.protein))].sort();
   const cats = [...new Set(state.data.dishes.map((d) => d.category))].sort();
   root.innerHTML = `
+    <div class="sk-card tone" style="margin-bottom:12px">
+      <div class="sk-row" style="justify-content:space-between;align-items:center">
+        <div>
+          <b>Своё блюдо</b>
+          <div class="sk-meta">Сохранится в каталог семьи и будет в поиске</div>
+        </div>
+        <button class="sk-btn sk-btn-accent" id="btn-custom-dish">Добавить</button>
+      </div>
+      <div id="custom-dish-form" style="display:none;margin-top:12px">
+        <div class="sk-plan-form">
+          <label class="sk-field span-2">Название<input class="sk-input" id="cd-name" placeholder="Например: запеканка мамы" /></label>
+          <label class="sk-field">Тип
+            <select class="sk-select" id="cd-type">
+              <option value="main">Основное</option>
+              <option value="soup">Суп</option>
+              <option value="breakfast">Завтрак</option>
+              <option value="snack">Перекус</option>
+            </select>
+          </label>
+          <label class="sk-field">Белок<input class="sk-input" id="cd-protein" value="своё" /></label>
+          <label class="sk-field">Минут<input class="sk-input" type="number" id="cd-time" value="30" /></label>
+          <label class="sk-field">На дней<input class="sk-input" type="number" id="cd-batch" value="2" min="1" max="7" /></label>
+          <label class="sk-field span-2">Для дочки<input class="sk-input" id="cd-child" placeholder="Без сахара, мягко…" /></label>
+          <label class="sk-field span-2">Шаги (по строке)<textarea class="sk-input" id="cd-steps" rows="3" placeholder="1.&#10;2."></textarea></label>
+        </div>
+        <button class="sk-btn sk-btn-primary" id="cd-save" style="margin-top:8px">Сохранить блюдо</button>
+      </div>
+    </div>
     <div class="sk-card" style="margin-bottom:14px">
       <div class="sk-row">
         <label class="sk-field" style="flex:1;min-width:180px">Поиск
@@ -566,6 +718,48 @@ function renderRecipes() {
     }
   };
 
+  $("#btn-custom-dish").onclick = () => {
+    const box = $("#custom-dish-form");
+    box.style.display = box.style.display === "none" ? "block" : "none";
+  };
+  $("#cd-save").onclick = async () => {
+    const name = $("#cd-name").value.trim();
+    if (!name) return toast("Название");
+    const steps = ($("#cd-steps").value || "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const id = `custom_dish_${name.toLowerCase().replace(/[^a-zа-я0-9]+/gi, "_").slice(0, 36)}_${Math.random().toString(36).slice(2, 5)}`;
+    const dishNew = {
+      id,
+      name,
+      type: $("#cd-type").value,
+      category: "своё",
+      protein: $("#cd-protein").value.trim() || "своё",
+      timeMin: +$("#cd-time").value || 30,
+      batchDays: +$("#cd-batch").value || 2,
+      servings: 4,
+      costBatch: 0,
+      costPerServing: 0,
+      description: "Семейный рецепт",
+      child: $("#cd-child").value.trim() || "По вкусу семьи",
+      ingredients: [],
+      steps: steps.length ? steps : ["Приготовить по семейному способу"],
+      tips: [],
+      tags: ["своё"],
+      stores: [],
+      equipment: [],
+      custom: true,
+    };
+    if (!Array.isArray(state.settings.customDishes)) state.settings.customDishes = [];
+    state.settings.customDishes.push(dishNew);
+    mergeCustomProducts();
+    await persistLocal();
+    toast(`«${name}» сохранено`);
+    renderRecipes();
+    openRecipe(id);
+  };
+
   ["recipe-q", "f-type", "f-cat", "f-protein", "f-time", "f-batch"].forEach((id) => {
     $("#" + id).addEventListener("input", redraw);
     $("#" + id).addEventListener("change", redraw);
@@ -598,7 +792,14 @@ function recipeHtml(d, servingsOverride = null) {
       <span class="sk-tag hot">база ${d.servings} порц · ${rub(d.costBatch)}</span>
     </div>
     <p class="sk-meta">Где купить: ${stores || "—"}</p>
-    <div class="sk-note"><b>Дочка:</b> ${d.child}</div>
+    <div class="sk-card" style="margin:10px 0;padding:12px">
+      <b>Для дочки</b>
+      <ul style="margin:8px 0 0;padding-left:18px" id="child-notes-list">
+        ${childNotes(d, state.settings)
+          .map((n) => `<li class="child-note child-${n.level}">${n.text}</li>`)
+          .join("") || `<li class="sk-meta">Без особых ограничений</li>`}
+      </ul>
+    </div>
 
     <div class="sk-card tone" style="margin:14px 0">
       <h3 style="margin-top:0">Добавить в ближайшую еду</h3>
@@ -815,7 +1016,7 @@ function renderStats() {
   const root = $("#screen-stats");
   const fromDefault = dayjs().subtract(30, "day").format("YYYY-MM-DD");
   const toDefault = dayjs().format("YYYY-MM-DD");
-  const vis = state._statVis || { kpis: true, timeline: true, contours: true, meals: true, products: true, cooks: true };
+  const vis = state._statVis || { kpis: true, timeline: true, contours: true, meals: true, products: true, cooks: true, costly: true };
   root.innerHTML = `
     <div class="sk-card tone" style="margin-bottom:14px">
       <div class="sk-row">
@@ -830,6 +1031,7 @@ function renderStats() {
           ["contours", "Категории трат"],
           ["meals", "Приёмы пищи"],
           ["products", "Товары"],
+          ["costly", "Дорогие"],
           ["cooks", "Готовки"],
         ]
           .map(
@@ -838,15 +1040,16 @@ function renderStats() {
           )
           .join("")}
       </div>
-      <p class="sk-meta">Категории: готовка · алкоголь (вино+джин) · вкусняшки · сладкое/к чаю · прочее (разовое без тега). Приёмы — из отметок «Приготовил».</p>
+      <p class="sk-meta">Категории: готовка · алкоголь · вкусняшки · сладкое/к чаю · прочее. Плюс покрытие ужинов запасами.</p>
     </div>
     <div id="stat-kpis" class="sk-stat-row" style="${vis.kpis ? "" : "display:none"}"></div>
     <div class="sk-grid" style="margin-top:12px">
       <div class="sk-col-6" id="blk-timeline" style="${vis.timeline ? "" : "display:none"}"><div class="sk-card"><h3>Траты по дням</h3><div class="chart-box"><canvas id="chart-timeline"></canvas></div></div></div>
       <div class="sk-col-6" id="blk-contours" style="${vis.contours ? "" : "display:none"}"><div class="sk-card"><h3>Категории расходов</h3><p class="sk-meta">Куда уходят деньги</p><div class="chart-box"><canvas id="chart-cat"></canvas></div><div id="cat-legend" class="sk-meta" style="margin-top:8px"></div></div></div>
-      <div class="sk-col-6" id="blk-meals" style="${vis.meals ? "" : "display:none"}"><div class="sk-card"><h3>Приёмы пищи</h3><p class="sk-meta">Сколько раз готовили · ₽ по приёму (если отмечено)</p><div class="chart-box"><canvas id="chart-meals"></canvas></div></div></div>
+      <div class="sk-col-6" id="blk-meals" style="${vis.meals ? "" : "display:none"}"><div class="sk-card"><h3>Приёмы пищи</h3><p class="sk-meta">Сколько раз готовили</p><div class="chart-box"><canvas id="chart-meals"></canvas></div></div></div>
       <div class="sk-col-6" id="blk-meal-spend" style="${vis.meals ? "" : "display:none"}"><div class="sk-card"><h3>Готовка по приёмам ₽</h3><div class="chart-box"><canvas id="chart-meal-spend"></canvas></div></div></div>
       <div class="sk-col-12" id="blk-products" style="${vis.products ? "" : "display:none"}"><div class="sk-card"><h3>Популярные товары</h3><div style="overflow:auto"><table class="sk-table" id="pop-table"><thead><tr><th>#</th><th>Товар</th><th>Раз</th><th>Кол-во</th><th>Сумма</th></tr></thead><tbody></tbody></table></div></div></div>
+      <div class="sk-col-12" id="blk-costly" style="${vis.costly ? "" : "display:none"}"><div class="sk-card"><h3>Самые дорогие покупки</h3><div style="overflow:auto"><table class="sk-table" id="costly-table"><thead><tr><th>#</th><th>Товар</th><th>Раз</th><th>Сумма</th></tr></thead><tbody></tbody></table></div></div></div>
       <div class="sk-col-12" id="blk-cooks" style="${vis.cooks ? "" : "display:none"}"><div class="sk-card"><h3>Последние готовки</h3><div id="cook-list"></div></div></div>
     </div>`;
 
@@ -870,12 +1073,14 @@ function renderStats() {
     const sum = totalSpend(ev);
     const cookEv = ev.filter((e) => e.type === "cook");
     const cooks = cookEv.slice(-15).reverse();
+    const cov = stockCoverageShare(state.plan, state.cat.dishes, state.cat.products, inventoryAmounts(state.inventory));
+    const costly = topExpensiveProducts(ev, state.cat.products, 12);
     if ($("#stat-kpis")) {
       $("#stat-kpis").innerHTML = `
         <div class="sk-stat"><span class="sk-meta">Всего ₽</span><b>${rub(sum)}</b></div>
         <div class="sk-stat"><span class="sk-meta">Покупок</span><b>${ev.filter((e) => e.type === "spend").length}</b></div>
         <div class="sk-stat"><span class="sk-meta">Готовок</span><b>${cookEv.length}</b></div>
-        <div class="sk-stat"><span class="sk-meta">Алкоголь</span><b>${rub(cats.alcohol)}</b></div>`;
+        <div class="sk-stat"><span class="sk-meta">Ужины из запасов</span><b>${Math.round(cov.share * 100)}%</b></div>`;
     }
     if (vis.timeline && $("#chart-timeline")) {
       state.charts.timeline = new Chart($("#chart-timeline"), {
@@ -931,6 +1136,11 @@ function renderStats() {
         pop.map((p, i) => `<tr><td>${i + 1}</td><td>${p.name}</td><td>${p.count}</td><td>${Math.round(p.qty)}</td><td>${rub(p.cost)}</td></tr>`).join("") ||
         `<tr><td colspan="5" class="sk-meta">Нет данных</td></tr>`;
     }
+    if ($("#costly-table tbody")) {
+      $("#costly-table tbody").innerHTML =
+        costly.map((p, i) => `<tr><td>${i + 1}</td><td>${p.name}</td><td>${p.count}</td><td>${rub(p.cost)}</td></tr>`).join("") ||
+        `<tr><td colspan="4" class="sk-meta">Нет данных</td></tr>`;
+    }
     if ($("#cook-list")) {
       const mealLab = SPEND_LABELS;
       $("#cook-list").innerHTML = cooks.length
@@ -970,14 +1180,16 @@ function renderBudget() {
   const sweetFact = b.sweetSpent || 0;
   const totalPlan = (s.cookingBudget || 0) + aPlan + (s.treatsBudget || 0) + sweetPlan;
   const totalFact = (b.cookingSpent || 0) + aFact + (b.treatsSpent || 0) + sweetFact;
+  const fc = monthForecast(state.events, totalPlan);
   root.innerHTML = `
     <div class="sk-stat-row">
       <div class="sk-stat"><span class="sk-meta">План месяца</span><b>${rub(totalPlan)}</b></div>
-      <div class="sk-stat"><span class="sk-meta">Факт (ledger)</span><b>${rub(totalFact)}</b></div>
-      <div class="sk-stat"><span class="sk-meta">Из покупок</span><b>${rub(fromPurchases.cooking + fromPurchases.alcohol + fromPurchases.treats + fromPurchases.sweet)}</b></div>
+      <div class="sk-stat"><span class="sk-meta">Факт покупок</span><b>${rub(fc.spent)}</b></div>
+      <div class="sk-stat"><span class="sk-meta">Прогноз к ${fc.daysInMonth}-му</span><b style="color:${fc.over ? "var(--hot,#b33)" : "inherit"}">${rub(fc.projected)}</b></div>
+      <div class="sk-stat"><span class="sk-meta">Можно/день</span><b>${rub(fc.dailyCap)}</b></div>
     </div>
-    <div class="sk-card" style="margin-bottom:12px">
-      <p class="sk-meta">Алкоголь = вино + джин одной статьёй. Сладкое/к чаю — отдельно от вкусняшек. Факт тянется из цен при галочке в «Покупки».</p>
+    <div class="sk-card ${fc.over ? "" : "tone"}" style="margin-bottom:12px">
+      <p class="sk-meta">${fc.over ? `Темп выше цели: прогноз ${rub(fc.projected)} при плане ${rub(totalPlan)}. Осталось ${fc.daysInMonth - fc.day} дн.` : `Темп ок. Остаток бюджета ~${rub(fc.left)} на ${fc.daysInMonth - fc.day} дн.`}</p>
       <button class="sk-btn sk-btn-accent" id="pull-purchases">Подтянуть факт из покупок</button>
     </div>
     <div class="sk-card">
@@ -1031,9 +1243,22 @@ function renderBudget() {
 /* ——— SYNC ——— */
 function renderSync() {
   const root = $("#screen-sync");
+  const rem = state.settings.reminders || { enabled: true, hour: 20, minute: 0 };
   root.innerHTML = `
     <div class="sk-hero"><h1>Облако семьи</h1><p>Сохранения уходят сами. ПК не нужен.</p></div>
     <div class="sk-ok"><b>Ничего настраивать не нужно.</b> Запасы, план, покупки и бюджет синхронизируются через Cloudflare.</div>
+    <div class="sk-card" style="margin-bottom:12px">
+      <h3 style="margin-top:0">Напоминания</h3>
+      <p class="sk-meta">Вечером локальное уведомление: обновить запасы и покупки. Работает в установленном PWA (добавить на экран).</p>
+      <label class="sk-field"><input type="checkbox" id="rem-on" ${rem.enabled !== false ? "checked" : ""} /> Включить вечернее напоминание</label>
+      <label class="sk-field">Час (0–23)<input class="sk-input" type="number" min="0" max="23" id="rem-hour" value="${rem.hour ?? 20}" /></label>
+      <div class="sk-row" style="margin-top:8px">
+        <button class="sk-btn sk-btn-accent" id="rem-save">Сохранить</button>
+        <button class="sk-btn sk-btn-ghost" id="rem-perm">Разрешить уведомления</button>
+        <button class="sk-btn sk-btn-ghost" id="rem-test">Тест сейчас</button>
+      </div>
+      <p class="sk-meta">Статус разрешения: ${"Notification" in window ? Notification.permission : "нет поддержки"}</p>
+    </div>
     <div class="sk-card">
       <p class="sk-meta">API: ${APP_CONFIG.apiBase}</p>
       <p class="sk-meta">Семья: ${APP_CONFIG.familyKey} · устройство ${deviceId()}</p>
@@ -1050,6 +1275,29 @@ function renderSync() {
         <input type="file" id="import-file" accept="application/json" hidden />
       </div>
     </div>`;
+  $("#rem-save").onclick = async () => {
+    state.settings.reminders = {
+      enabled: $("#rem-on").checked,
+      hour: Math.max(0, Math.min(23, +$("#rem-hour").value || 20)),
+      minute: 0,
+    };
+    await persistLocal();
+    toast("Напоминание сохранено");
+  };
+  $("#rem-perm").onclick = async () => {
+    const p = await ensureNotifyPermission();
+    toast(p === "granted" ? "Разрешено" : `Статус: ${p}`);
+    renderSync();
+  };
+  $("#rem-test").onclick = async () => {
+    await ensureNotifyPermission();
+    const storeKey = "sk_reminders";
+    try {
+      localStorage.setItem(storeKey, JSON.stringify({}));
+    } catch {}
+    const ok = await maybeEveningReminder({ ...state.settings, reminders: { enabled: true, hour: 0, minute: 0 } });
+    toast(ok ? "Уведомление отправлено" : "Не удалось (нужно разрешение)");
+  };
 
   $("#btn-pull").onclick = async () => {
     try {
@@ -1120,7 +1368,13 @@ async function boot() {
 
   state.settings.profile = "command";
   updateSyncBadge();
-  setScreen("plan");
+  const bootScreen = new URLSearchParams(location.search).get("screen") || "today";
+  setScreen(["today", "plan", "period", "inventory", "basket", "recipes", "stats", "budget", "sync"].includes(bootScreen) ? bootScreen : "today");
+
+  initReminders(state.settings).catch(() => {});
+  navigator.serviceWorker?.addEventListener("message", (e) => {
+    if (e.data?.type === "open-screen" && e.data.screen) setScreen(e.data.screen);
+  });
 
   syncPull(true)
     .then(() => {
@@ -1136,6 +1390,7 @@ async function boot() {
           if (["inventory", "plan", "today"].includes(state.screen)) renderScreen();
         })
         .catch(() => {});
+      maybeEveningReminder(state.settings);
     }
   }, APP_CONFIG.pollMs);
 
@@ -1146,6 +1401,7 @@ async function boot() {
           if (!isTyping()) renderScreen();
         })
         .catch(() => {});
+      maybeEveningReminder(state.settings);
     }
   });
 }

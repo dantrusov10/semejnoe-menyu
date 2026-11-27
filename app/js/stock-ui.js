@@ -7,6 +7,9 @@ import {
   slotsFromPlan,
   buildPeriodPlan,
   recipeStockHint,
+  proteinBalance,
+  markBatchHints,
+  daysRu,
 } from "./engine.js";
 import {
   inventoryAmounts,
@@ -26,7 +29,43 @@ import {
 } from "./inventory.js";
 import { makeEvent } from "./sync.js";
 import { productIcon } from "./icons.js";
-import { avgUnitPrices, estimatePlanCostSmart, estimateDishCost, guessSpendCategory, SPEND_LABELS } from "./stats.js";
+import { avgUnitPrices, estimatePlanCostSmart, estimateDishCost, guessSpendCategory, SPEND_LABELS, priceHistory } from "./stats.js";
+
+const SHOP_TEMPLATES = [
+  {
+    id: "treats",
+    name: "Вкусняшки недели",
+    items: [
+      { name: "Фуэт / колбаски", qty: 1, unit: "pcs", category: "treats" },
+      { name: "Твёрдый сыр", qty: 200, unit: "g", category: "treats" },
+      { name: "Чипсы", qty: 1, unit: "pack", category: "treats" },
+      { name: "Сухарики", qty: 1, unit: "pack", category: "treats" },
+    ],
+  },
+  {
+    id: "gin",
+    name: "Джин + тоник + лимон",
+    items: [
+      { name: "Джин", qty: 1, unit: "pcs", category: "alcohol" },
+      { name: "Тоник", qty: 2, unit: "pcs", category: "alcohol" },
+      { name: "Лимон", qty: 2, unit: "pcs", category: "alcohol" },
+    ],
+  },
+  {
+    id: "wine",
+    name: "Вино (неделя)",
+    items: [{ name: "Вино", qty: 2, unit: "pcs", category: "alcohol" }],
+  },
+  {
+    id: "dairy",
+    name: "Молочка базовая",
+    items: [
+      { name: "Молоко", qty: 2, unit: "l" },
+      { name: "Творог", qty: 400, unit: "g" },
+      { name: "Яйца", qty: 10, unit: "pcs" },
+    ],
+  },
+];
 
 const QUICK = [
   ["chicken_cheap", 1000],
@@ -330,6 +369,30 @@ export function createStockUi(ctx) {
     });
   }
 
+  function renderCookFromExpiring(body) {
+    const exp = expiringIds(3);
+    if (!exp.size) return;
+    const matches = matchFromInventory(state.data.dishes, state.cat.products, amounts(), state.settings, {
+      minServings: 2,
+      mode: "almost",
+      maxMissingRub: 200,
+    }).filter((m) => (m.dish.ingredients || []).some((ing) => exp.has(ing.id))).slice(0, 6);
+    if (!matches.length) return;
+    const card = document.createElement("div");
+    card.className = "sk-card";
+    card.style.marginBottom = "12px";
+    card.innerHTML = `<h3 style="margin-top:0">Из того, что истекает</h3><p class="sk-meta">Блюда, которые спасут продукты со сроком</p><div class="sk-chip-row" id="exp-cook"></div>`;
+    body.prepend(card);
+    matches.forEach((m) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "sk-chip";
+      b.textContent = `${m.dish.name} · ${Math.round(m.coverage * 100)}%`;
+      b.onclick = () => openRecipe(m.dish.id);
+      card.querySelector("#exp-cook").appendChild(b);
+    });
+  }
+
   function renderProducts(body) {
     const filter = state._invFilter || "have";
     const zoneF = state._invZone || "all";
@@ -370,6 +433,7 @@ export function createStockUi(ctx) {
     });
 
     paintInvRows();
+    renderCookFromExpiring(body);
 
     $("#inv-q").oninput = (e) => {
       state._invQ = e.target.value;
@@ -475,6 +539,10 @@ export function createStockUi(ctx) {
         <button class="sk-btn sk-btn-accent" id="from-plan" style="margin-top:8px">Добавить нужное из плана</button>
       </div>
       <div class="sk-card" style="margin-bottom:12px">
+        <div class="sk-meta" style="margin-bottom:6px">Шаблоны</div>
+        <div class="sk-chip-row" id="shop-templates"></div>
+      </div>
+      <div class="sk-card" style="margin-bottom:12px">
         <div class="shop-add" style="align-items:stretch">
           <div class="shop-ac" style="flex:2">
             <input class="sk-input sk-input-lg" id="shop-text" placeholder="Продукт (новый сохранится в каталог)" autocomplete="off" />
@@ -489,14 +557,57 @@ export function createStockUi(ctx) {
           <button class="sk-btn sk-btn-primary" id="shop-add">Добавить</button>
         </div>
         <label class="sk-meta" style="display:block;margin-top:8px">Фото (необяз.) <input type="file" id="shop-photo" accept="image/*" /></label>
+        <div class="sk-meta" id="shop-price-hist" style="margin-top:6px"></div>
       </div>
       <div class="shop-list" id="shop-open"></div>
       <h3 style="margin:16px 0 8px">Куплено</h3>
       <div class="shop-list" id="shop-done"></div>
       <div class="sk-row" style="margin-top:12px">
-        <button class="sk-btn sk-btn-ghost" id="shop-clear-done">Очистить купленное</button>
+        <button class="sk-btn sk-btn-accent" id="shop-share">Поделиться</button>
         <button class="sk-btn sk-btn-ghost" id="shop-copy">Скопировать</button>
+        <button class="sk-btn sk-btn-ghost" id="shop-clear-done">Очистить купленное</button>
       </div>`;
+
+    SHOP_TEMPLATES.forEach((tpl) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "sk-chip";
+      b.textContent = tpl.name;
+      b.onclick = async () => {
+        const list = ensureList();
+        let n = 0;
+        for (const it of tpl.items) {
+          let p = allProducts().find((x) => x.name.toLowerCase() === it.name.toLowerCase());
+          if (!p) {
+            p = registerCustomProduct({ name: it.name, unit: it.unit, category: it.category === "alcohol" ? "алкоголь" : it.category === "treats" ? "вкусняшки" : "своё" });
+          }
+          const amount = toBaseAmount(it.qty, it.unit, p);
+          list.unshift({
+            id: uid(),
+            text: `${p.name} — ${it.qty} ${ALL_UNITS.find((u) => u.value === it.unit)?.label || it.unit}`,
+            productId: p.id,
+            amount,
+            qty: it.qty,
+            unit: it.unit,
+            category: p.category || "",
+            comment: tpl.name,
+            brand: "",
+            photo: "",
+            done: false,
+            price: null,
+            priceMode: "total",
+            spendCategory: it.category || "cooking",
+            source: "template",
+            at: new Date().toISOString(),
+          });
+          n += 1;
+        }
+        await persistLocal();
+        toast(`+${n} из «${tpl.name}»`);
+        renderBasket();
+      };
+      $("#shop-templates").appendChild(b);
+    });
 
     state.plan.forEach((day, i) => {
       const on = pick.days.includes(i);
@@ -562,6 +673,10 @@ export function createStockUi(ctx) {
           $("#shop-unit").innerHTML = opts.map((u) => `<option value="${u.value}">${u.label}</option>`).join("");
           ac.style.display = "none";
           shopText.focus();
+          const hist = priceHistory(state.events, pickedProd.id, 3);
+          $("#shop-price-hist").textContent = hist.length
+            ? `Было: ${hist.map((h) => `${rub(h.cost)} (${new Date(h.at).toLocaleDateString("ru-RU")})`).join(" · ")}`
+            : "Истории цены пока нет";
         };
       });
     };
@@ -800,11 +915,29 @@ export function createStockUi(ctx) {
       await persistLocal();
       renderBasket();
     };
+    const listText = () => open.map((x) => `• ${x.text}${x.comment ? ` (${x.comment})` : ""}`).join("\n") || "Список пуст";
     $("#shop-copy").onclick = async () => {
-      const text = open.map((x) => `• ${x.text}${x.comment ? ` (${x.comment})` : ""}`).join("\n");
+      const text = listText();
       try {
-        await navigator.clipboard.writeText(text || "—");
+        await navigator.clipboard.writeText(text);
         toast("Скопировано");
+      } catch {
+        prompt("Скопируйте:", text);
+      }
+    };
+    $("#shop-share").onclick = async () => {
+      const text = `Покупки · Семейная кухня\n${listText()}`;
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: "Покупки", text });
+          return;
+        } catch {
+          /* cancelled */
+        }
+      }
+      try {
+        await navigator.clipboard.writeText(text);
+        toast("Скопировано — вставьте в Telegram");
       } catch {
         prompt("Скопируйте:", text);
       }
@@ -831,12 +964,13 @@ export function createStockUi(ctx) {
           <label class="sk-field">Режим
             <select class="sk-select" id="per-mode">
               <option value="recipes">Разнообразие</option>
+              <option value="batch">Batch / меньше варок</option>
               <option value="products">От запасов</option>
               <option value="loved">Любимое</option>
             </select>
           </label>
         </div>
-        <p class="sk-meta">Оценка ₽: сначала средняя цена из ваших покупок, иначе ориентир каталога.</p>
+        <p class="sk-meta">Оценка ₽: из ваших покупок, иначе каталог. Batch = блюда на 2+ дня и подсказки «варка / разогрев».</p>
         <div class="sk-row">
           <button class="sk-btn sk-btn-accent" id="per-build">Собрать</button>
           <button class="sk-btn sk-btn-primary" id="per-apply">В план</button>
@@ -846,20 +980,23 @@ export function createStockUi(ctx) {
     $("#per-mode").value = per.mode || "recipes";
 
     const draw = (plan, cost) => {
+      const bal = proteinBalance(plan, state.cat.dishes);
+      const cookDays = plan.filter((d) => d.isCookDay).length || Math.ceil(plan.length / 3);
       $("#per-out").innerHTML = `<div class="sk-forecast"><div><div class="sk-meta">Оценка периода</div><div class="sk-kpi">${rub(cost)}</div></div>
-        <div><div class="sk-meta">Дней</div><div class="sk-kpi" style="font-size:1.2rem">${plan.length}</div></div></div>
+        <div><div class="sk-meta">Дней / варок</div><div class="sk-kpi" style="font-size:1.2rem">${plan.length} / ~${cookDays}</div></div>
+        <div><div class="sk-meta">Белок</div><div class="sk-meta">кур ${bal.chicken} · свин ${bal.pork} · гов ${bal.beef} · рыб ${bal.fish}</div></div></div>
         <div class="sk-grid" id="per-grid"></div>`;
       plan.forEach((day) => {
         const col = document.createElement("div");
         col.className = "sk-col-4";
-        let html = `<div class="sk-card"><h3 style="margin:0 0 8px;font-size:1.05rem">${day.label}</h3>`;
+        let html = `<div class="sk-card"><h3 style="margin:0 0 8px;font-size:1.05rem">${day.label}</h3><p class="sk-meta">${day.cookHint || ""}</p>`;
         ["breakfast", "lunch", "dinner"].forEach((key) => {
           const d = state.cat.dishes[day[key]];
           if (!d) return;
           const hint = recipeStockHint(d, amt, state.cat.products, exp);
           const dc = estimateDishCost(d, state.cat.products, avg);
           const labels = { breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин" };
-          html += `<div class="sk-meal ${hint.coverage > 0.7 ? "stock-ok" : "stock-mid"}" data-rid="${d.id}" style="margin-top:6px"><b>${labels[key]}</b><div><div style="font-weight:750">${d.name}</div><div class="sk-meta">~${rub(dc)} партия · запасы ${Math.round(hint.coverage * 100)}%</div></div></div>`;
+          html += `<div class="sk-meal ${hint.coverage > 0.7 ? "stock-ok" : "stock-mid"}" data-rid="${d.id}" style="margin-top:6px"><b>${labels[key]}</b><div><div style="font-weight:750">${d.name}</div><div class="sk-meta">~${rub(dc)} · запасы ${Math.round(hint.coverage * 100)}% · ${daysRu(d.batchDays)}</div></div></div>`;
         });
         html += `</div>`;
         col.innerHTML = html;
@@ -889,6 +1026,20 @@ export function createStockUi(ctx) {
         seed: Date.now() ^ Math.floor(Math.random() * 1e9),
       };
       let plan = buildPeriodPlan(state.data, state.settings, opts);
+      if (opts.mode === "batch") {
+        const batchPool = state.data.dishes.filter((d) => (d.batchDays || 1) >= 2 && d.type === "main" && !state.settings.disliked?.includes(d.id));
+        const breakfasts = state.data.dishes.filter((d) => d.type === "breakfast");
+        const soups = state.data.dishes.filter((d) => d.type === "soup");
+        plan = plan.map((day, i) => {
+          const dinner = batchPool[Math.floor(i / 3) % Math.max(1, batchPool.length)];
+          return {
+            ...day,
+            breakfast: breakfasts[i % Math.max(1, breakfasts.length)]?.id || day.breakfast,
+            lunch: soups[i % Math.max(1, soups.length)]?.id || day.lunch,
+            dinner: dinner?.id || day.dinner,
+          };
+        });
+      }
       if (opts.mode === "products") {
         const matches = matchFromInventory(state.data.dishes, state.cat.products, amt, state.settings, {
           minServings: 2,
@@ -905,6 +1056,23 @@ export function createStockUi(ctx) {
           dinner: byType.main[i % Math.max(1, byType.main.length)]?.id || day.dinner,
         }));
       }
+      if (opts.mode === "loved") {
+        const loved = (state.settings.loved || []).map((id) => state.cat.dishes[id]).filter(Boolean);
+        if (loved.length) {
+          const byType = {
+            breakfast: loved.filter((d) => d.type === "breakfast"),
+            soup: loved.filter((d) => d.type === "soup"),
+            main: loved.filter((d) => d.type === "main"),
+          };
+          plan = plan.map((day, i) => ({
+            ...day,
+            breakfast: byType.breakfast[i % Math.max(1, byType.breakfast.length)]?.id || day.breakfast,
+            lunch: byType.soup[i % Math.max(1, byType.soup.length)]?.id || day.lunch,
+            dinner: byType.main[i % Math.max(1, byType.main.length)]?.id || day.dinner,
+          }));
+        }
+      }
+      plan = markBatchHints(plan, state.cat.dishes);
       // budget filter: swap expensive dinners for cheaper alternatives
       if (cap > 0) {
         let cost = estimatePlanCostSmart(plan, state.cat.dishes, state.cat.products, avg);

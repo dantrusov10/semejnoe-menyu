@@ -873,6 +873,18 @@ tr.inv-detail td { background: var(--surface-2); padding: 12px 14px; }
   transform: translateX(-50%) translateY(0);
 }
 
+.child-note { margin: 4px 0; }
+.child-note.child-block { color: #9b2c2c; font-weight: 650; }
+.child-note.child-warn { color: #9a6700; }
+.child-note.child-ok,
+.child-note.child-info { color: var(--muted, #5c6673); }
+
+textarea.sk-input {
+  min-height: 88px;
+  resize: vertical;
+  font-family: inherit;
+}
+
 /* Hide bootstrap chrome leftovers if any */
 .navbar, .toast-container { display: none !important; }
 

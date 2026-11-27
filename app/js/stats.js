@@ -169,4 +169,91 @@ export function estimatePlanCostSmart(plan, dishes, products, avgPrices) {
   return Math.round(sum);
 }
 
+/** Прогноз месяца: факт → экстраполяция до конца месяца */
+export function monthForecast(events, budgetPlanTotal) {
+  const now = dayjs();
+  const month = now.format("YYYY-MM");
+  const day = now.date();
+  const daysInMonth = now.daysInMonth();
+  let spent = 0;
+  const byCat = { cooking: 0, alcohol: 0, treats: 0, sweet: 0, other: 0 };
+  for (const e of events || []) {
+    if (e.type !== "spend") continue;
+    if (!String(e.at || "").startsWith(month)) continue;
+    const t = e.total || 0;
+    spent += t;
+    const k = normalizeSpendCategory(e.category);
+    if (byCat[k] !== undefined) byCat[k] += t;
+    else byCat.other += t;
+  }
+  const pace = day > 0 ? spent / day : 0;
+  const projected = Math.round(pace * daysInMonth);
+  const plan = budgetPlanTotal || 0;
+  const remainingDays = Math.max(0, daysInMonth - day);
+  const left = plan - spent;
+  const dailyCap = remainingDays > 0 ? left / remainingDays : 0;
+  return {
+    month,
+    day,
+    daysInMonth,
+    spent: Math.round(spent),
+    projected,
+    plan,
+    left: Math.round(left),
+    dailyCap: Math.round(dailyCap),
+    over: plan > 0 && projected > plan,
+    byCat,
+  };
+}
+
+/** Топ дорогих ингредиентов по истории покупок */
+export function topExpensiveProducts(events, products, limit = 10) {
+  const map = new Map();
+  for (const e of events || []) {
+    if (e.type !== "spend") continue;
+    for (const it of e.items || []) {
+      if (!it.id || !it.cost) continue;
+      const cur = map.get(it.id) || { id: it.id, name: products[it.id]?.name || it.name || it.id, cost: 0, count: 0 };
+      cur.cost += it.cost;
+      cur.count += 1;
+      map.set(it.id, cur);
+    }
+  }
+  return [...map.values()].sort((a, b) => b.cost - a.cost).slice(0, limit);
+}
+
+/** История цен по продукту */
+export function priceHistory(events, productId, limit = 8) {
+  const rows = [];
+  for (const e of events || []) {
+    if (e.type !== "spend") continue;
+    for (const it of e.items || []) {
+      if (it.id !== productId || !it.cost) continue;
+      rows.push({ at: e.at, cost: it.cost, amount: it.amount || 0 });
+    }
+  }
+  return rows.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, limit);
+}
+
+/** Доля дней плана, закрытых запасами (по coverage ужина) */
+export function stockCoverageShare(plan, dishes, products, inventoryAmountsMap) {
+  let ok = 0;
+  let total = 0;
+  for (const day of plan || []) {
+    const d = dishes[day.dinner];
+    if (!d) continue;
+    total += 1;
+    const hint = (() => {
+      let have = 0;
+      for (const ing of d.ingredients || []) {
+        if ((inventoryAmountsMap[ing.id] || 0) > 0) have += 1;
+      }
+      const n = d.ingredients?.length || 1;
+      return have / n;
+    })();
+    if (hint >= 0.7) ok += 1;
+  }
+  return { ok, total, share: total ? ok / total : 0 };
+}
+
 export { dayjs };
