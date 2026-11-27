@@ -312,7 +312,18 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .recipe-pick:hover { border-color: var(--accent-2); }
 .recipe-pick.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent-2); }
-.recipe-pick .ico { font-size: 1.35rem; }
+.recipe-pick .ico { font-size: 1.35rem; display: inline-flex; align-items: center; }
+.sk-ico {
+  display: inline-block;
+  vertical-align: -0.22em;
+  color: var(--accent);
+  --secondary: color-mix(in srgb, var(--accent-2) 82%, #fff 8%);
+}
+.prod-ico .sk-ico,
+.recipe-pick .sk-ico {
+  width: 1.15em;
+  height: 1.15em;
+}
 .recipe-count { font-weight: 750; color: var(--muted); margin: 8px 0 12px; }
 
 .cal-grid {

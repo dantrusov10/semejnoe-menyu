@@ -546,7 +546,7 @@ export function createStockUi(ctx) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "sk-chip";
-      b.textContent = `${productIcon(p)} + ${p.name}`;
+      b.innerHTML = `${productIcon(p)} <span>+ ${p.name}</span>`;
       b.onclick = () => openProductModal(id, "restock");
       $("#quick").appendChild(b);
     });
