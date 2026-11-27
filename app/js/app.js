@@ -20,10 +20,9 @@ import {
   basketToText,
 } from "./engine.js";
 import {
-  getToken,
-  setToken,
   pullCloud,
   pushCloud,
+  healthCloud,
   mergeEvents,
   makeEvent,
   APP_CONFIG,
@@ -73,6 +72,25 @@ async function persistLocal() {
   await dbSet("plan", state.plan);
   await dbSet("weekNum", state.weekNum);
   await dbSet("budget", state.budget);
+  // автосохранение в облако — без кнопок
+  cloudSave().catch((e) => {
+    state.syncError = String(e.message || e);
+    updateSyncBadge();
+  });
+}
+
+async function cloudSave() {
+  const res = await pushCloud({
+    inventory: state.inventory,
+    events: state.events,
+    plan: state.plan,
+    settings: state.settings,
+    budget: state.budget,
+    weekNum: state.weekNum,
+  });
+  state.syncAt = res.updatedAt || new Date().toISOString();
+  state.syncError = null;
+  updateSyncBadge();
 }
 
 async function loadLocal() {
@@ -91,45 +109,34 @@ function dish(id) {
 
 function updateSyncBadge() {
   const el = $("#sync-badge");
-  if (!getToken()) {
-    el.textContent = "без синка";
+  if (state.syncError) {
+    el.textContent = "офлайн";
     el.className = "badge text-bg-warning";
     return;
   }
-  if (state.syncError) {
-    el.textContent = "ошибка синка";
-    el.className = "badge text-bg-danger";
-    return;
-  }
-  el.textContent = state.syncAt ? `синк ${dayjs(state.syncAt).format("HH:mm")}` : "синк ок";
+  el.textContent = state.syncAt ? `облако ${dayjs(state.syncAt).format("HH:mm")}` : "облако";
   el.className = "badge text-bg-light text-success";
 }
 
-async function syncPull(preferCloudInventory = true) {
-  const token = getToken();
-  if (!token) return;
+async function syncPull(preferCloud = true) {
   try {
-    const cloud = await pullCloud(token);
-    if (preferCloudInventory) state.inventory = { ...(cloud.inventory || {}) };
+    const cloud = await pullCloud();
+    if (preferCloud) {
+      if (cloud.inventory) state.inventory = { ...cloud.inventory };
+      if (cloud.plan?.length) state.plan = cloud.plan;
+      if (cloud.settings) state.settings = { ...state.settings, ...cloud.settings };
+      if (cloud.budget) state.budget = { ...state.budget, ...cloud.budget };
+      if (cloud.weekNum) state.weekNum = cloud.weekNum;
+    }
     state.events = mergeEvents(state.events, cloud.events || []);
     state.syncAt = cloud.updatedAt || new Date().toISOString();
     state.syncError = null;
-    await persistLocal();
-    updateSyncBadge();
-  } catch (e) {
-    state.syncError = String(e.message || e);
-    updateSyncBadge();
-    throw e;
-  }
-}
-
-async function syncPush() {
-  const token = getToken();
-  if (!token) return;
-  try {
-    await pushCloud({ inventory: state.inventory, events: state.events });
-    state.syncAt = new Date().toISOString();
-    state.syncError = null;
+    await dbSet("settings", state.settings);
+    await dbSet("inventory", state.inventory);
+    await dbSet("events", state.events);
+    await dbSet("plan", state.plan);
+    await dbSet("weekNum", state.weekNum);
+    await dbSet("budget", state.budget);
     updateSyncBadge();
   } catch (e) {
     state.syncError = String(e.message || e);
@@ -140,13 +147,6 @@ async function syncPush() {
 
 async function saveInventoryAndSync() {
   await persistLocal();
-  if (getToken()) {
-    try {
-      await syncPush();
-    } catch (e) {
-      toast(e.message);
-    }
-  }
 }
 
 function applyProfile() {
@@ -516,11 +516,6 @@ function renderBasket() {
       state.inventory[it.id] = (state.inventory[it.id] || 0) + (it.buy || 0);
     });
     await persistLocal();
-    try {
-      await syncPush();
-    } catch (e) {
-      toast(e.message);
-    }
     toast(`Покупка ${rub(basket.total)} учтена`);
     renderBasket();
   };
@@ -803,9 +798,6 @@ function renderBudget() {
     await add("#add-gin", "ginSpent", "gin");
     await add("#add-treats", "treatsSpent", "treats");
     await persistLocal();
-    try {
-      await syncPush();
-    } catch (_) {}
     toast("Бюджет обновлён");
     renderBudget();
   };
@@ -821,55 +813,45 @@ function renderSync() {
   const root = $("#screen-sync");
   root.innerHTML = `
     <div class="card border-0 shadow-sm"><div class="card-body">
-      <h1 class="h3"><i class="bi bi-cloud-check me-2"></i>Общие запасы семьи</h1>
-      <p>Один и тот же облачный файл (GitHub Gist) видят оба телефона. Нужен <strong>личный токен GitHub</strong> с правом <code>gist</code> — один раз вставить на каждом устройстве.</p>
-      <ol>
-        <li>Откройте <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a></li>
-        <li>Generate new token (classic) → отметьте только <code>gist</code> → Generate</li>
-        <li>Вставьте токен ниже на этом телефоне и на телефоне жены</li>
-      </ol>
-      <div class="alert alert-secondary small">Gist ID уже прописан в приложении: <code>${APP_CONFIG.gistId}</code>. Устройство: <code>${deviceId()}</code></div>
-      <label class="form-label">GitHub token (gist)</label>
-      <input type="password" class="form-control form-control-lg mb-2" id="gh-token" value="${getToken()}" placeholder="ghp_…" autocomplete="off" />
-      <div class="d-grid d-sm-flex gap-2 mb-3">
-        <button class="btn btn-success" id="save-token">Сохранить токен</button>
-        <button class="btn btn-outline-success" id="btn-pull">Забрать из облака</button>
-        <button class="btn btn-outline-secondary" id="btn-push">Отправить в облако</button>
+      <h1 class="h3"><i class="bi bi-cloud-check me-2"></i>Облако семьи</h1>
+      <div class="alert alert-success">
+        <strong>Ничего настраивать не нужно.</strong> Любое сохранение (запасы, план, покупка, бюджет)
+        само уходит в облако Cloudflare. С другого телефона или через неделю — данные подтянутся сами.
+        Домашний компьютер <strong>не нужен</strong>.
       </div>
-      <div class="small text-secondary mb-3">Последний синк: ${state.syncAt ? dayjs(state.syncAt).format("DD.MM.YYYY HH:mm") : "—"} ${state.syncError ? `· ошибка: ${state.syncError}` : ""}</div>
+      <ul class="mb-3">
+        <li>API: <code>${APP_CONFIG.apiBase}</code></li>
+        <li>Семья: <code>${APP_CONFIG.familyKey}</code></li>
+        <li>Устройство: <code>${deviceId()}</code></li>
+        <li>Последнее сохранение: ${state.syncAt ? dayjs(state.syncAt).format("DD.MM.YYYY HH:mm") : "—"}</li>
+        <li>Статус: ${state.syncError ? `<span class="text-danger">${state.syncError}</span>` : `<span class="text-success">ок</span>`}</li>
+      </ul>
+      <div class="d-flex flex-wrap gap-2 mb-3">
+        <button class="btn btn-outline-success" id="btn-pull">Обновить сейчас</button>
+        <button class="btn btn-outline-secondary" id="btn-health">Проверить облако</button>
+      </div>
       <hr />
-      <h2 class="h5">Резервная копия</h2>
+      <h2 class="h5">Резервная копия на всякий случай</h2>
       <div class="d-flex flex-wrap gap-2">
         <button class="btn btn-outline-secondary" id="export-data">Экспорт JSON</button>
         <button class="btn btn-outline-secondary" id="import-data">Импорт JSON</button>
         <input type="file" id="import-file" accept="application/json" class="d-none" />
       </div>
-      <p class="small text-secondary mt-3 mb-0">Архитектура: <a href="docs/PRODUCT-ARCHITECTURE.md">docs/PRODUCT-ARCHITECTURE.md</a> · старый прототип: <a href="prototype.html">prototype.html</a></p>
     </div></div>`;
 
-  $("#save-token").onclick = async () => {
-    setToken($("#gh-token").value);
-    toast("Токен сохранён на устройстве");
-    updateSyncBadge();
-    try {
-      await syncPull(true);
-      toast("Подтянули общие запасы");
-    } catch (e) {
-      toast(e.message);
-    }
-  };
   $("#btn-pull").onclick = async () => {
     try {
       await syncPull(true);
       toast("Обновлено из облака");
+      renderScreen();
     } catch (e) {
       toast(e.message);
     }
   };
-  $("#btn-push").onclick = async () => {
+  $("#btn-health").onclick = async () => {
     try {
-      await syncPush();
-      toast("Отправлено в облако");
+      const h = await healthCloud();
+      toast(h.ok ? "Облако онлайн, ПК не нужен" : "Проблема");
     } catch (e) {
       toast(e.message);
     }
@@ -891,7 +873,8 @@ function renderSync() {
     const data = JSON.parse(await file.text());
     await dbImportAll(data);
     await loadLocal();
-    toast("Импорт готов");
+    await persistLocal();
+    toast("Импорт готов и ушёл в облако");
     renderScreen();
   };
 }
@@ -926,21 +909,29 @@ async function boot() {
   updateSyncBadge();
   setScreen(state.settings.profile === "kitchen" ? "today" : "plan");
 
-  if (getToken()) {
-    syncPull(true).catch(() => {});
-  }
+  syncPull(true)
+    .then(() => {
+      applyProfile();
+      renderScreen();
+    })
+    .catch(() => {});
+
   setInterval(() => {
-    if (getToken() && document.visibilityState === "visible") {
+    if (document.visibilityState === "visible") {
       syncPull(true)
         .then(() => {
-          if (state.screen === "inventory") renderInventory();
+          if (["inventory", "plan", "today"].includes(state.screen)) renderScreen();
         })
         .catch(() => {});
     }
   }, APP_CONFIG.pollMs);
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && getToken()) syncPull(true).catch(() => {});
+    if (document.visibilityState === "visible") {
+      syncPull(true)
+        .then(() => renderScreen())
+        .catch(() => {});
+    }
   });
 }
 

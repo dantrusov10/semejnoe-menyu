@@ -1,16 +1,6 @@
 import { APP_CONFIG } from "./config.js";
 
-const TOKEN_KEY = "sk_gh_gist_token";
 const DEVICE_KEY = "sk_device_id";
-
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || "";
-}
-
-export function setToken(token) {
-  if (!token) localStorage.removeItem(TOKEN_KEY);
-  else localStorage.setItem(TOKEN_KEY, token.trim());
-}
 
 export function deviceId() {
   let id = localStorage.getItem(DEVICE_KEY);
@@ -21,86 +11,60 @@ export function deviceId() {
   return id;
 }
 
-function headers(token, withJson = true) {
-  const h = {
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
-  if (token) h.Authorization = `Bearer ${token}`;
-  if (withJson) h["Content-Type"] = "application/json";
-  return h;
-}
-
 export function emptyCloud() {
   return {
-    version: 1,
-    updatedAt: new Date().toISOString(),
-    updatedBy: deviceId(),
     inventory: {},
     events: [],
+    plan: null,
+    settings: null,
+    budget: null,
+    weekNum: 1,
+    updatedAt: null,
   };
 }
 
-/** Тянем общее состояние семьи из private gist */
-export async function pullCloud(token = getToken()) {
-  if (!token) throw new Error("Нет токена GitHub (gist). Введите в разделе Синхрон.");
-  const res = await fetch(`https://api.github.com/gists/${APP_CONFIG.gistId}`, {
-    headers: headers(token, false),
+function apiHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "X-Family-Key": APP_CONFIG.familyKey,
+  };
+}
+
+/** Тянем полное состояние семьи из облака (Cloudflare KV). ПК не нужен. */
+export async function pullCloud() {
+  const res = await fetch(`${APP_CONFIG.apiBase}/state`, {
+    headers: apiHeaders(),
+    cache: "no-store",
   });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Не удалось прочитать облако (${res.status}): ${t.slice(0, 180)}`);
-  }
-  const gist = await res.json();
-  const file = gist.files?.[APP_CONFIG.gistFile];
-  if (!file?.content) return emptyCloud();
-  try {
-    return { ...emptyCloud(), ...JSON.parse(file.content) };
-  } catch {
-    return emptyCloud();
-  }
+  if (!res.ok) throw new Error(`Облако недоступно (${res.status})`);
+  const data = await res.json();
+  return { ...emptyCloud(), ...data };
 }
 
-/** Пушим inventory + events (events храним последние 2000) */
-export async function pushCloud(payload, token = getToken()) {
-  if (!token) throw new Error("Нет токена GitHub (gist).");
+/** Пишем состояние — вызывается автоматически при каждом сохранении. */
+export async function pushCloud(payload) {
   const body = {
-    files: {
-      [APP_CONFIG.gistFile]: {
-        content: JSON.stringify(
-          {
-            ...payload,
-            version: 1,
-            updatedAt: new Date().toISOString(),
-            updatedBy: deviceId(),
-            events: (payload.events || []).slice(-2000),
-          },
-          null,
-          2
-        ),
-      },
-    },
+    inventory: payload.inventory || {},
+    events: (payload.events || []).slice(-2000),
+    plan: payload.plan ?? null,
+    settings: payload.settings ?? null,
+    budget: payload.budget ?? null,
+    weekNum: payload.weekNum ?? 1,
+    device: deviceId(),
   };
-  const res = await fetch(`https://api.github.com/gists/${APP_CONFIG.gistId}`, {
-    method: "PATCH",
-    headers: headers(token),
+  const res = await fetch(`${APP_CONFIG.apiBase}/state`, {
+    method: "PUT",
+    headers: apiHeaders(),
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Не удалось сохранить (${res.status}): ${t.slice(0, 180)}`);
-  }
+  if (!res.ok) throw new Error(`Не удалось сохранить в облако (${res.status})`);
   return res.json();
 }
 
-/**
- * Слияние инвентаря: берём max по количеству? Нет — last-write-wins по updatedAt полям.
- * Проще и предсказуемее для семьи: облако после pull — источник правды для inventory,
- * локальные несохранённые правки пушим целиком.
- */
-export function mergeInventory(localInv, cloudInv, prefer = "local") {
-  if (prefer === "cloud") return { ...(cloudInv || {}) };
-  return { ...(cloudInv || {}), ...(localInv || {}) };
+export async function healthCloud() {
+  const res = await fetch(`${APP_CONFIG.apiBase}/health`, { cache: "no-store" });
+  if (!res.ok) throw new Error("health fail");
+  return res.json();
 }
 
 export function mergeEvents(localEvents, cloudEvents) {
@@ -120,5 +84,11 @@ export function makeEvent(partial) {
     ...partial,
   };
 }
+
+/** @deprecated токен больше не нужен — оставлен для совместимости UI */
+export function getToken() {
+  return "cloud";
+}
+export function setToken(_t) {}
 
 export { APP_CONFIG };

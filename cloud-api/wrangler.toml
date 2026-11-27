@@ -1,0 +1,8 @@
+name = "semejnoe-menyu-api"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "STORE"
+id = "24b572118b0e446e8af14be7e9c310dd"
+preview_id = "dd146198043c4302bf1347f81c850ef2"

@@ -1,39 +1,20 @@
 # Семейная кухня
 
-**Онлайн:** https://dantrusov10.github.io/semejnoe-menyu/  
-**Репозиторий:** https://github.com/dantrusov10/semejnoe-menyu
+**Онлайн:** https://dantrusov10.github.io/semejnoe-menyu/
 
-ОС домашней еды для семьи из трёх: запасы → меню → корзина → готовка → деньги.  
-Магазины: Ашан, Пятёрочка, [Парное мясо](https://parnoemjaso.ru/).
+ОС домашней еды: запасы → меню → корзина → готовка → деньги.  
+Облако **Cloudflare** — домашний ПК **не нужен**. Сохранил в приложении → само в облаке; открыл с другого телефона → само подтянулось.
 
-## Возможности
+## Облако
 
-- **Общие запасы** между телефонами (GitHub Gist) — см. [docs/SYNC.md](docs/SYNC.md)
-- Профили **Кухня** / **Командный центр**
-- План недели, корзина по магазинам, подбор блюд из запасов
-- Подробные рецепты + фильтры (тип, категория, белок, время, теги, Fuse.js поиск)
-- **Статистика** за произвольный период (Chart.js): траты и популярные товары
-- Бюджет: готовка / вино / джин / вкусняшки
-- Адаптив: телефон / планшет / ноутбук / десктоп (Bootstrap 5)
+- API: https://semejnoe-menyu-api.aspiring-detective.workers.dev  
+- Семья: ключ `bogdaniha` (вшит)  
+- Инструкция: [docs/SYNC.md](docs/SYNC.md)
 
-## Open-source стек UI
+**Один раз закрепить облако** (чтобы preview-аккаунт Cloudflare не истёк):  
+https://dash.cloudflare.com/claim-preview?claimToken=jcIWLgkR2x5xyHUB1fssl49dNOzSfd5zD0xY5tNnIXU  
+→ Sign in with **GitHub** (dantrusov10).
 
-Bootstrap 5 · Bootstrap Icons · Chart.js · Fuse.js · Tom Select · dayjs
+## Стек
 
-## Синхронизация (обязательно для двух телефонов)
-
-1. Раздел **Синхрон** в приложении  
-2. Токен GitHub classic с правом `gist` на каждом устройстве  
-3. Инструкция: [docs/SYNC.md](docs/SYNC.md)
-
-## Документы
-
-| Файл | Зачем |
-|------|--------|
-| [docs/PRODUCT-ARCHITECTURE.md](docs/PRODUCT-ARCHITECTURE.md) | Архитектура |
-| [docs/SYNC.md](docs/SYNC.md) | Общие остатки |
-| [BRIEF.md](BRIEF.md) | Бриф семьи |
-
-```bash
-node tools/build.mjs   # пересборка data/*.js и prototype.html (index.html не трогает)
-```
+Bootstrap 5 · Chart.js · Fuse.js · Tom Select · dayjs · Cloudflare Workers/KV
