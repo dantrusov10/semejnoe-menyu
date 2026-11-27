@@ -25,10 +25,12 @@ import {
   markBatchHints,
   recipeStockHint,
   repairPlanLabels,
+  matchFromInventory,
 } from "./engine.js";
 import { normalizeInventory, invAmount, setInvAmount, inventoryAmounts, expiryStatus } from "./inventory.js";
 import { createStockUi } from "./stock-ui.js";
 import { dishIcon } from "./icons.js";
+import { openSkModal, closeSkModal } from "./a11y-modals.js";
 import {
   pullCloud,
   pushCloud,
@@ -335,15 +337,60 @@ async function saveInventoryAndSync() {
 
 const PAGE_META = {
   today: ["Сегодня", "Что едим, что готово, чего не хватает."],
-  plan: ["План", "Календарь и меню по дням."],
-  period: ["Период", "Собрать меню на N дней с разнообразием и лимитом."],
-  inventory: ["Запасы", "Продукты, готовые блюда, что приготовить из сроков."],
+  plan: ["Меню", "Принятое меню по дням. Новое — в «Сборке»."],
+  period: ["Сборка", "Авточерновик на N дней → принять в меню."],
+  inventory: ["Запасы", "Продукты и подбор: строго / почти / срочно."],
   basket: ["Покупки", "Список, шаблоны, шаринг. Цена — при покупке."],
-  recipes: ["Рецепты", "Поиск, своё блюдо, любимое → неделя."],
+  recipes: ["Рецепты", "Поиск, своё блюдо, любимое → меню."],
   stats: ["Статистика", "Категории, приёмы, товары, покрытие запасами."],
   budget: ["Бюджет", "Факт + прогноз до конца месяца."],
   sync: ["Облако", "Синхронизация и напоминания."],
 };
+
+const SCREEN_HINTS = {
+  today: {
+    id: "hint_today",
+    text: "Сегодня — блюда из меню. «Замена» меняет слот. Готовое после «Приготовил» появляется ниже.",
+  },
+  plan: {
+    id: "hint_menu",
+    text: "Меню — то, что уже принято. Собрать новое: «Сборка» → авточерновик → «В меню».",
+  },
+  period: {
+    id: "hint_assembly",
+    text: "Сборка сразу строит авточерновик. Параметры можно поменять и нажать «Авточерновик» ещё раз.",
+  },
+  inventory: {
+    id: "hint_stock",
+    text: "Строго = только из того, что есть. Почти = можно докупить немного. Срочно = сначала продукты со сроком.",
+  },
+  basket: {
+    id: "hint_basket",
+    text: "Цена при покупке обновляет историю. Пополнение запасов со скрина тоже может подтянуть цены в каталог.",
+  },
+};
+
+function hintHtml(screen) {
+  const h = SCREEN_HINTS[screen];
+  if (!h) return "";
+  if (!state.settings.hintsDismissed) state.settings.hintsDismissed = {};
+  if (state.settings.hintsDismissed[h.id]) return "";
+  return `<div class="sk-hint" data-hint="${h.id}" role="status">
+    <p>${h.text}</p>
+    <button type="button" class="sk-btn sk-btn-ghost" data-hint-dismiss style="min-height:40px">Понятно</button>
+  </div>`;
+}
+
+function bindHintDismiss(root) {
+  root?.querySelector("[data-hint-dismiss]")?.addEventListener("click", async () => {
+    const id = root.querySelector("[data-hint]")?.dataset.hint;
+    if (!id) return;
+    if (!state.settings.hintsDismissed) state.settings.hintsDismissed = {};
+    state.settings.hintsDismissed[id] = true;
+    await persistLocal();
+    root.querySelector("[data-hint]")?.remove();
+  });
+}
 
 function setScreen(name) {
   state.screen = name;
@@ -431,12 +478,15 @@ function openDayModal(day) {
     col.className = "sk-col-12";
     col.innerHTML = `<div class="sk-meal"><b>${label}</b><div><div style="font-weight:750">${dishIcon(d)} ${d.name}</div><div class="sk-meta">${d.timeMin} мин · ${d.category}</div></div><div class="price">~${rub(d.costPerServing)}</div></div>`;
     col.querySelector(".sk-meal").onclick = () => {
-      $("#dayModal")?.classList.remove("show");
+      closeSkModal($("#dayModal"));
       openRecipe(d.id);
     };
     box.appendChild(col);
   });
-  $("#dayModal")?.classList.add("show");
+  openSkModal($("#dayModal"), {
+    titleId: "dayModalTitle",
+    close: () => closeSkModal($("#dayModal")),
+  });
 }
 
 function renderMonthCalendar(rootSel, plan) {
@@ -518,7 +568,21 @@ function renderToday() {
   const fc = monthForecast(state.events, budgetPlanTotal());
   const labels = { breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин" };
 
+  const mode = state._matchMode || "almost";
+  const expiring = new Set();
+  for (const [id, lot] of Object.entries(state.inventory || {})) {
+    const st = expiryStatus(lot.expiresAt, 3);
+    if (st === "soon" || st === "expired") expiring.add(id);
+  }
+  const stockMatches = matchFromInventory(state.data.dishes, state.cat.products, amt, state.settings, {
+    minServings: 2,
+    mode,
+    maxMissingRub: mode === "urgent" ? 320 : 200,
+    expiringIds: expiring,
+  }).slice(0, 5);
+
   root.innerHTML = `
+    ${hintHtml("today")}
     <div class="sk-forecast">
       <div><div class="sk-meta">Месяц сейчас</div><div class="sk-kpi" style="font-size:1.35rem">${rub(fc.spent)}</div></div>
       <div><div class="sk-meta">Прогноз к концу</div><div class="sk-kpi" style="font-size:1.35rem;color:${fc.over ? "var(--hot)" : "inherit"}">${rub(fc.projected)}</div></div>
@@ -526,11 +590,20 @@ function renderToday() {
     </div>
     <div class="sk-card tone" style="margin-bottom:14px">
       <div class="sk-row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
-        <h2 style="margin:0">${today ? today.label || today.dayName : "Нет плана"}</h2>
-        <button class="sk-btn sk-btn-ghost" id="td-to-plan" style="min-height:40px">Весь план</button>
+        <h2 style="margin:0">${today ? today.label || today.dayName : "Нет меню"}</h2>
+        <button class="sk-btn sk-btn-ghost" id="td-to-plan" style="min-height:40px">Всё меню</button>
       </div>
-      <p class="sk-meta">${today?.cookHint || "Соберите период или шаблон недели"}</p>
+      <p class="sk-meta">${today?.cookHint || "Соберите меню в «Сборке» или шаблон недели"}</p>
       <div id="td-meals"></div>
+    </div>
+    <div class="sk-card" style="margin-bottom:14px">
+      <h3 style="margin-top:0">Из запасов</h3>
+      <div class="sk-seg sk-seg-wide" id="td-match-modes" role="tablist" aria-label="Режим подбора">
+        <button type="button" data-mode="strict" class="${mode === "strict" ? "active" : ""}">Строго</button>
+        <button type="button" data-mode="almost" class="${mode === "almost" ? "active" : ""}">Почти</button>
+        <button type="button" data-mode="urgent" class="${mode === "urgent" ? "active" : ""}">Срочно</button>
+      </div>
+      <div class="sk-chip-row" id="td-stock-cook" style="margin-top:8px"></div>
     </div>
     <div class="sk-card" style="margin-bottom:14px" id="td-batch">
       <h3 style="margin-top:0">Готовое в холодильнике</h3>
@@ -539,8 +612,9 @@ function renderToday() {
     <div class="sk-row">
       <button class="sk-btn sk-btn-accent" id="td-basket">Покупки</button>
       <button class="sk-btn sk-btn-ghost" id="td-inv">Запасы</button>
-      <button class="sk-btn sk-btn-ghost" id="td-period">Период</button>
+      <button class="sk-btn sk-btn-ghost" id="td-period">Сборка</button>
     </div>`;
+  bindHintDismiss(root);
 
   const box = $("#td-meals");
   if (today) {
@@ -575,8 +649,29 @@ function renderToday() {
       box.appendChild(row);
     });
   } else {
-    box.innerHTML = `<div class="sk-note">Плана нет — откройте «Период» или «Рецепты».</div>`;
+    box.innerHTML = `<div class="sk-note">Меню пусто — откройте «Сборку» или «Рецепты».</div>`;
   }
+
+  const cookBox = $("#td-stock-cook");
+  if (!stockMatches.length) {
+    cookBox.innerHTML = `<div class="sk-meta">В этом режиме пока нечего предложить.</div>`;
+  } else {
+    stockMatches.forEach((m) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "sk-chip";
+      b.textContent = `${m.dish.name} · ${Math.round(m.coverage * 100)}%`;
+      b.title = m.why;
+      b.onclick = () => openRecipe(m.dish.id);
+      cookBox.appendChild(b);
+    });
+  }
+  $$("#td-match-modes [data-mode]").forEach((b) => {
+    b.onclick = () => {
+      state._matchMode = b.dataset.mode;
+      renderToday();
+    };
+  });
 
   const stockBox = $("#td-meals-stock");
   if (!meals.length) {
@@ -611,8 +706,9 @@ function renderPlan() {
   const cost = estimatePlanCost(state.plan, state.cat.dishes);
   const bal = proteinBalance(state.plan, state.cat.dishes);
   root.innerHTML = `
+    ${hintHtml("plan")}
     <div class="sk-forecast">
-      <div><div class="sk-meta">Прогноз плана</div><div class="sk-kpi">${rub(cost)}</div></div>
+      <div><div class="sk-meta">Прогноз меню</div><div class="sk-kpi">${rub(cost)}</div></div>
       <div><div class="sk-meta">Дней</div><div class="sk-kpi" style="font-size:1.2rem">${state.plan.length}</div></div>
       <div><div class="sk-meta">Белок (приёмы)</div><div class="sk-meta">кур ${bal.chicken} · свин ${bal.pork} · гов ${bal.beef} · рыб ${bal.fish}</div></div>
     </div>
@@ -621,13 +717,14 @@ function renderPlan() {
       <div id="cal-wrap"></div>
     </div>
     <div class="sk-row">
-      <button class="sk-btn sk-btn-accent" id="to-period">Собрать период</button>
+      <button class="sk-btn sk-btn-accent" id="to-period">Сборка</button>
       <button class="sk-btn sk-btn-ghost" id="to-basket-week">В покупки</button>
       <button class="sk-btn sk-btn-ghost" id="to-today">Сегодня</button>
       <button class="sk-btn sk-btn-primary" id="gen-week">Шаблон недели</button>
       <button class="sk-btn sk-btn-ghost" id="gen-loved">Из любимого</button>
     </div>
     <div class="sk-grid" id="plan-grid" style="margin-top:12px"></div>`;
+  bindHintDismiss(root);
 
   renderMonthCalendar("#cal-wrap", state.plan);
   $("#to-period").onclick = () => setScreen("period");
@@ -713,14 +810,26 @@ function ensureStockUi() {
   });
   return stockUi;
 }
+function injectScreenHint(screen) {
+  const root = $(`#screen-${screen}`);
+  if (!root) return;
+  const html = hintHtml(screen);
+  if (!html || root.querySelector("[data-hint]")) return;
+  root.insertAdjacentHTML("afterbegin", html);
+  bindHintDismiss(root);
+}
+
 function renderInventory() {
   ensureStockUi().renderInventory();
+  injectScreenHint("inventory");
 }
 function renderBasket() {
   ensureStockUi().renderBasket();
+  injectScreenHint("basket");
 }
 function renderPeriod() {
   ensureStockUi().renderPeriod();
+  injectScreenHint("period");
 }
 
 /* ——— RECIPES ——— */
@@ -1174,8 +1283,11 @@ function openCookPreview(d, form) {
       <button class="sk-btn sk-btn-primary" id="cook-confirm">Списать и в готовое</button>
       <button class="sk-btn sk-btn-ghost" id="cook-cancel">Отмена</button>
     </div>`;
-  $("#cookModal")?.classList.add("show");
-  $("#cook-cancel").onclick = () => $("#cookModal")?.classList.remove("show");
+  openSkModal($("#cookModal"), {
+    titleId: "cookModalTitle",
+    close: () => closeSkModal($("#cookModal")),
+  });
+  $("#cook-cancel").onclick = () => closeSkModal($("#cookModal"));
   $("#cook-confirm").onclick = async () => {
     const items = [];
     $$("#cook-deduct-table tbody tr").forEach((tr) => {
@@ -1195,7 +1307,7 @@ function openCookPreview(d, form) {
     ensureStockUi().onCooked(d, form2);
     state.events.push(makeEvent({ type: "cook", recipeId: d.id, recipeName: d.name, meal: form.meal, items }));
     await saveInventoryAndSync();
-    $("#cookModal")?.classList.remove("show");
+    closeSkModal($("#cookModal"));
     closeRecipeModal();
     toast(items.length ? `Списали ${items.length} поз. · +${portions} порц. в готовое` : `В готовое +${portions} порц. (со запасов ничего)`);
     if (state.screen === "today" || state.screen === "inventory") renderScreen();
@@ -1209,10 +1321,10 @@ function mountRecipeView(d, root) {
 }
 
 function openRecipeModal() {
-  $("#recipeModal")?.classList.add("show");
+  openSkModal($("#recipeModal"), { titleId: "recipeModalTitle", close: closeRecipeModal });
 }
 function closeRecipeModal() {
-  $("#recipeModal")?.classList.remove("show");
+  closeSkModal($("#recipeModal"));
 }
 
 function openRecipe(id, showModal = true) {
@@ -1585,13 +1697,13 @@ async function boot() {
   $("#productModal")?.addEventListener("click", (e) => {
     if (e.target.id === "productModal") ensureStockUi().closeProductModal();
   });
-  $("#day-modal-close")?.addEventListener("click", () => $("#dayModal")?.classList.remove("show"));
+  $("#day-modal-close")?.addEventListener("click", () => closeSkModal($("#dayModal")));
   $("#dayModal")?.addEventListener("click", (e) => {
-    if (e.target.id === "dayModal") $("#dayModal")?.classList.remove("show");
+    if (e.target.id === "dayModal") closeSkModal($("#dayModal"));
   });
-  $("#cook-modal-close")?.addEventListener("click", () => $("#cookModal")?.classList.remove("show"));
+  $("#cook-modal-close")?.addEventListener("click", () => closeSkModal($("#cookModal")));
   $("#cookModal")?.addEventListener("click", (e) => {
-    if (e.target.id === "cookModal") $("#cookModal")?.classList.remove("show");
+    if (e.target.id === "cookModal") closeSkModal($("#cookModal"));
   });
 
   $$("#nav-list [data-screen]").forEach((b) => {

@@ -119,17 +119,20 @@ async function callGemini(env, { system, user, imageBase64, mimeType, images, ma
 function visionPrompt(mode) {
   if (mode === "screenshot") {
     return `Ты разбираешь скриншот(ы) заказа из доставки еды/продуктов (Яндекс Доставка, Ашан, Лавка, Перекрёсток, Самокат и т.п.).
-Извлеки ВСЕ товарные позиции: название, количество, единицы.
-Игнорируй: доставку, сервисный сбор, промо без товара, адреса, кнопки UI, итоговую сумму как отдельную позицию.
+Извлеки ВСЕ товарные позиции: название, количество, единицы и цену строки если видна.
+Игнорируй: доставку, сервисный сбор, промо без товара, адреса, кнопки UI, итоговую сумму заказа как отдельную позицию.
 Если несколько скринов — это страницы одного заказа: объедини и не дублируй одинаковые строки.
 Верни ТОЛЬКО JSON:
-{"items":[{"nameGuess":"...","qty":1,"unit":"pcs|g|kg|ml|l|pack","confidence":0.0,"notes":""}],"unknown":["..."],"sourceHint":"order_screenshot"}
-qty — как в заказе (шт/уп); вес в граммах → unit=g, qty в граммах. Не выдумывай товары, которых нет на экране.`;
+{"items":[{"nameGuess":"...","qty":1,"unit":"pcs|g|kg|ml|l|pack","priceTotal":0,"confidence":0.0,"notes":""}],"unknown":["..."],"sourceHint":"order_screenshot"}
+qty — как в заказе (шт/уп); вес в граммах → unit=g, qty в граммах.
+priceTotal — сумма строки в рублях (число), если на скрине есть цена; иначе 0.
+Не выдумывай товары, которых нет на экране.`;
   }
   return `Ты распознаёшь продукты на фото пакета/покупки/стола после доставки для семейного приложения.
 Перечисли видимые продукты питания (и съедобные расходники). Несколько одинаковых — суммируй qty.
+Если на этикетке/ценнике видна цена — укажи priceTotal в рублях, иначе 0.
 Верни ТОЛЬКО JSON:
-{"items":[{"nameGuess":"...","qty":1,"unit":"pcs|g|kg|ml|l|pack","confidence":0.0,"notes":""}],"unknown":["..."],"sourceHint":"bag_photo"}
+{"items":[{"nameGuess":"...","qty":1,"unit":"pcs|g|kg|ml|l|pack","priceTotal":0,"confidence":0.0,"notes":""}],"unknown":["..."],"sourceHint":"bag_photo"}
 unit только: g,kg,ml,l,pcs,pack. Не выдумывай бренды без этикетки. Если не еда — items:[].`;
 }
 
@@ -326,10 +329,12 @@ async function handleVision(request, env, family) {
     if (!nameGuess) continue;
     const key = `${nameGuess.toLowerCase()}|${unit}`;
     const qty = Math.max(0, +it.qty || 1);
+    const priceTotal = Math.max(0, Math.round(+it.priceTotal || +it.price || 0));
     const prev = merged.get(key);
     if (prev) {
       prev.qty += qty;
       prev.confidence = Math.max(prev.confidence, Math.min(1, Math.max(0, +(it.confidence ?? 0.5))));
+      if (priceTotal > 0) prev.priceTotal = (prev.priceTotal || 0) + priceTotal;
       continue;
     }
     merged.set(key, {
@@ -337,6 +342,7 @@ async function handleVision(request, env, family) {
       nameGuess,
       qty,
       unit,
+      priceTotal,
       confidence: Math.min(1, Math.max(0, +(it.confidence ?? hit?._score ?? 0.5))),
       notes: String(it.notes || "").slice(0, 80),
     });

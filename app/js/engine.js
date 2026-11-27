@@ -284,8 +284,13 @@ export function markBatchHints(plan, dishes) {
  */
 export function matchFromInventory(dishes, products, inventory, settings, opts = {}) {
   const minServ = opts.minServings ?? 2;
-  const mode = opts.mode || "almost"; // strict | almost | waste
+  /** strict = только то что есть; almost = почти хватает; urgent = сначала сроки */
+  const mode = opts.mode || "almost";
   const maxMissingRub = opts.maxMissingRub ?? 250;
+  const expiring =
+    opts.expiringIds instanceof Set
+      ? opts.expiringIds
+      : new Set(opts.expiringIds || []);
   const results = [];
 
   for (const dish of dishes) {
@@ -300,6 +305,7 @@ export function matchFromInventory(dishes, products, inventory, settings, opts =
     const missing = [];
     let missingCost = 0;
     let wasteScore = 0;
+    let usesExpiring = 0;
 
     for (const ing of dish.ingredients) {
       const have = inventory[ing.id] || 0;
@@ -307,9 +313,10 @@ export function matchFromInventory(dishes, products, inventory, settings, opts =
       if (have > 0) {
         haveCount += 1;
         portions = Math.min(portions, have / per);
-        // скоропорт: молочка/зелень/мясо без expiry — лёгкий буст если есть
-        const p = products[ing.id];
-        if (p && ["milk", "kefir", "sourcream", "tvorog", "dill", "chicken_cheap"].includes(ing.id)) {
+        if (expiring.has(ing.id)) {
+          wasteScore += 0.4;
+          usesExpiring += 1;
+        } else if (["milk", "kefir", "sourcream", "tvorog", "dill", "chicken_cheap"].includes(ing.id)) {
           wasteScore += 0.05;
         }
       } else {
@@ -326,15 +333,19 @@ export function matchFromInventory(dishes, products, inventory, settings, opts =
 
     if (mode === "strict" && missing.length) continue;
     if (mode === "almost" && missingCost > maxMissingRub && coverage < 0.7) continue;
+    if (mode === "urgent") {
+      if (expiring.size && !usesExpiring) continue;
+      if (missingCost > maxMissingRub * 1.5 && coverage < 0.55) continue;
+    }
     if (portions < minServ && missing.length === 0) continue;
     if (mode === "strict" && portions < minServ) continue;
 
     const preferenceFit = settings.loved?.includes(dish.id) ? 1 : 0;
-    const varietyBonus = 0.5; // без истории — нейтрально
+    const varietyBonus = 0.5;
     const effortNorm = Math.min(1, (dish.timeMin || 40) / 90);
     const missingCostNorm = Math.min(1, missingCost / 500);
 
-    const score =
+    let score =
       40 * coverage +
       20 * Math.min(1, portions / 6) +
       15 * Math.min(1, wasteScore) +
@@ -343,6 +354,17 @@ export function matchFromInventory(dishes, products, inventory, settings, opts =
       15 * missingCostNorm -
       10 * effortNorm;
 
+    if (mode === "urgent") score += 28 * Math.min(1, wasteScore) + usesExpiring * 8;
+
+    const why =
+      mode === "urgent" && usesExpiring
+        ? `Спасёт срок · ${usesExpiring} поз.`
+        : coverage >= 0.99
+          ? "Всё есть на кухне"
+          : missing.length
+            ? `Не хватает на ~${Math.round(missingCost)} ₽`
+            : "Можно готовить";
+
     results.push({
       dish,
       coverage,
@@ -350,12 +372,8 @@ export function matchFromInventory(dishes, products, inventory, settings, opts =
       missing,
       missingCost,
       score,
-      why:
-        coverage >= 0.99
-          ? "Всё есть на кухне"
-          : missing.length
-            ? `Не хватает на ~${Math.round(missingCost)} ₽`
-            : "Можно готовить",
+      usesExpiring,
+      why,
     });
   }
 

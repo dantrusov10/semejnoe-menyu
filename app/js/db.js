@@ -87,6 +87,7 @@ export function defaultSettings() {
     period: { days: 7, adults: 2, childPortions: 1, childAge: 1.5, mode: "recipes", budgetCap: 0 },
     reminders: { enabled: true, hour: 20, minute: 0 },
     shopTemplatesUsed: [],
+    hintsDismissed: {},
   };
 }
 

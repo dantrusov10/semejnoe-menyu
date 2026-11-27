@@ -931,6 +931,30 @@ tr.inv-detail td { background: var(--surface-2); padding: 12px 14px; }
 .chart-box { position: relative; height: 260px; }
 @media (min-width: 768px) { .chart-box { height: 320px; } }
 
+/* Onboarding hints (dismissible) */
+.sk-hint {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #c9d5e3;
+  background: linear-gradient(135deg, #f3f6fa, #eef2f7);
+}
+.sk-hint p {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--ink);
+  flex: 1;
+  min-width: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sk-modal-card { animation: none; }
+  .sk-toast { transition: none; }
+}
+
 /* Modal */
 .sk-modal {
   display: none;

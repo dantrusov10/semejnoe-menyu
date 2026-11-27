@@ -31,6 +31,7 @@ import { makeEvent } from "./sync.js";
 import { productIcon } from "./icons.js";
 import { avgUnitPrices, estimatePlanCostSmart, estimateDishCost, guessSpendCategory, SPEND_LABELS, priceHistory } from "./stats.js";
 import { aiVision, compressForVisionMode, aiQuota } from "./ai.js";
+import { openSkModal, closeSkModal } from "./a11y-modals.js";
 
 const SHOP_TEMPLATES = [
   {
@@ -146,6 +147,15 @@ export function createStockUi(ctx) {
     if (p) Object.assign(p, patch);
     const custom = state.settings.customProducts?.find((x) => x.id === id);
     if (custom) Object.assign(custom, patch);
+  }
+
+  /** Каталожная цена = ₽ за базовую единицу (г/мл/шт) */
+  function applyPurchasePrice(productId, totalRub, amountBase) {
+    const total = +totalRub || 0;
+    const amt = +amountBase || 0;
+    if (!productId || total <= 0 || amt <= 0) return;
+    const unit = Math.round((total / amt) * 100000) / 100000;
+    setProductMeta(productId, { price: unit });
   }
 
   function registerCustomProduct({ name, unit, brand, photo, category }) {
@@ -272,56 +282,70 @@ export function createStockUi(ctx) {
       closeProductModal();
       renderInventory();
     });
-    $("#productModal")?.classList.add("show");
+    openSkModal($("#productModal"), { titleId: "productModalTitle", close: closeProductModal });
   }
 
   function closeProductModal() {
-    $("#productModal")?.classList.remove("show");
+    closeSkModal($("#productModal"));
   }
 
   function openVisionDraft(items, unknown, meta = {}) {
     const title = meta.mode === "screenshot" ? "Черновик со скрина заказа" : "Черновик с фото";
     const lead =
       meta.mode === "screenshot"
-        ? "Проверьте разбор заказа: поправьте названия/кол-во, снимите лишнее, затем в запас."
-        : "Проверьте, что на фото: поправьте при необходимости и добавьте в запас.";
+        ? "Проверьте разбор: название, кол-во и цену строки. Правьте и добавляйте строки, затем в запас — цены обновят каталог."
+        : "Проверьте разбор с фото. Можно править, добавить строку и указать цену — она обновит каталог.";
     $("#productModalTitle").textContent = title;
     $("#productModalBody").innerHTML = `
       <p class="sk-meta">${lead}${meta.imageCount > 1 ? ` · кадров: ${meta.imageCount}` : ""}</p>
       ${unknown?.length ? `<div class="sk-note">Неясно: ${unknown.join(", ")}</div>` : ""}
       <div id="vis-list" style="margin-top:10px"></div>
-      <div class="sk-row" style="margin-top:12px">
-        <button class="sk-btn sk-btn-primary" id="vis-apply">Добавить отмеченные</button>
-        <button class="sk-btn sk-btn-ghost" id="vis-cancel">Закрыть</button>
+      <div class="sk-row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+        <button type="button" class="sk-btn sk-btn-ghost" id="vis-add">+ Строка</button>
+        <button type="button" class="sk-btn sk-btn-primary" id="vis-apply">Добавить отмеченные</button>
+        <button type="button" class="sk-btn sk-btn-ghost" id="vis-cancel">Закрыть</button>
       </div>`;
     const list = $("#vis-list");
-    items.forEach((it, idx) => {
+
+    function addRow(it = {}) {
       const row = document.createElement("div");
       row.className = "shop-item";
+      const price = it.priceTotal > 0 ? it.priceTotal : it.price > 0 ? it.price : "";
       row.innerHTML = `
-        <input type="checkbox" data-on ${it.confidence >= 0.5 ? "checked" : ""} />
-        <div style="flex:1">
-          <input class="sk-input" data-name value="${(it.nameGuess || "").replace(/"/g, "&quot;")}" />
-          <div class="sk-row" style="margin-top:6px;gap:6px">
-            <input class="sk-input" type="number" min="0" step="any" data-qty value="${it.qty || 1}" style="max-width:90px" />
-            <select class="sk-select" data-unit style="max-width:90px">${ALL_UNITS.map((u) => `<option value="${u.value}" ${u.value === (it.unit || "pcs") ? "selected" : ""}>${u.label}</option>`).join("")}</select>
-            <span class="sk-meta">${it.productId ? "в каталоге" : "новый"} · ${Math.round((it.confidence || 0) * 100)}%</span>
+        <input type="checkbox" data-on ${it.confidence == null || it.confidence >= 0.5 ? "checked" : ""} aria-label="В запас" />
+        <div style="flex:1;min-width:0">
+          <input class="sk-input" data-name value="${String(it.nameGuess || "").replace(/"/g, "&quot;")}" placeholder="Название" aria-label="Название" />
+          <div class="sk-row" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+            <input class="sk-input" type="number" min="0" step="any" data-qty value="${it.qty || 1}" style="max-width:88px" aria-label="Количество" />
+            <select class="sk-select" data-unit style="max-width:90px" aria-label="Единица">${ALL_UNITS.map((u) => `<option value="${u.value}" ${u.value === (it.unit || "pcs") ? "selected" : ""}>${u.label}</option>`).join("")}</select>
+            <input class="sk-input" type="number" min="0" step="any" data-price value="${price}" placeholder="₽ строка" style="max-width:110px" aria-label="Цена строки" />
+            <span class="sk-meta">${it.productId ? "в каталоге" : "новый"}${it.confidence != null ? ` · ${Math.round((it.confidence || 0) * 100)}%` : ""}</span>
           </div>
         </div>`;
-      row.dataset.idx = String(idx);
       row._it = it;
       list.appendChild(row);
-    });
+      return row;
+    }
+
+    (items || []).forEach((it) => addRow(it));
+    if (!items?.length) addRow({ nameGuess: "", qty: 1, unit: "pcs", confidence: 1 });
+
+    $("#vis-add").onclick = () => {
+      addRow({ nameGuess: "", qty: 1, unit: "pcs", confidence: 1 });
+      list.lastElementChild?.querySelector("[data-name]")?.focus();
+    };
     $("#vis-cancel").onclick = () => closeProductModal();
     $("#vis-apply").onclick = async () => {
       let n = 0;
+      let priced = 0;
       [...list.children].forEach((row) => {
         if (!row.querySelector("[data-on]")?.checked) return;
         const name = row.querySelector("[data-name]").value.trim();
         const qty = +row.querySelector("[data-qty]").value || 0;
         const unit = row.querySelector("[data-unit]").value;
+        const priceTotal = +row.querySelector("[data-price]").value || 0;
         if (!name || !qty) return;
-        let p = row._it.productId ? state.cat.products[row._it.productId] : null;
+        let p = row._it?.productId ? state.cat.products[row._it.productId] : null;
         if (!p) {
           p = allProducts().find((x) => x.name.toLowerCase() === name.toLowerCase());
         }
@@ -331,13 +355,22 @@ export function createStockUi(ctx) {
           zone: p.defaultZone || "pantry",
           boughtAt: new Date().toISOString().slice(0, 10),
         });
+        if (priceTotal > 0) {
+          applyPurchasePrice(p.id, priceTotal, amount);
+          priced += 1;
+        }
         n += 1;
       });
       await saveInventoryAndSync();
       closeProductModal();
-      toast(n ? `В запас +${n}` : "Ничего не отмечено");
+      toast(
+        n
+          ? `В запас +${n}${priced ? ` · цен обновлено ${priced}` : ""}`
+          : "Ничего не отмечено"
+      );
       renderInventory();
     };
+    openSkModal($("#productModal"), { titleId: "productModalTitle", close: closeProductModal });
   }
 
   async function runVisionFromFiles(fileList, mode) {
@@ -416,7 +449,7 @@ export function createStockUi(ctx) {
       });
     };
     $("#rs-new").onclick = () => openProductModal(null, "restock-new");
-    $("#productModal")?.classList.add("show");
+    openSkModal($("#productModal"), { titleId: "productModalTitle", close: closeProductModal });
   }
 
   /* ——— INVENTORY ——— */
@@ -500,27 +533,58 @@ export function createStockUi(ctx) {
     updateInvBulkBar();
   }
 
-  function renderCookFromExpiring(body) {
+  function matchMode() {
+    return state._matchMode || "almost";
+  }
+
+  function renderMatchFromStock(body) {
+    const mode = matchMode();
     const exp = expiringIds(3);
-    if (!exp.size) return;
     const matches = matchFromInventory(state.data.dishes, state.cat.products, amounts(), state.settings, {
       minServings: 2,
-      mode: "almost",
-      maxMissingRub: 200,
-    }).filter((m) => (m.dish.ingredients || []).some((ing) => exp.has(ing.id))).slice(0, 6);
-    if (!matches.length) return;
+      mode,
+      maxMissingRub: mode === "strict" ? 0 : mode === "urgent" ? 320 : 200,
+      expiringIds: exp,
+    }).slice(0, 8);
     const card = document.createElement("div");
     card.className = "sk-card";
     card.style.marginBottom = "12px";
-    card.innerHTML = `<h3 style="margin-top:0">Из того, что истекает</h3><p class="sk-meta">Блюда, которые спасут продукты со сроком</p><div class="sk-chip-row" id="exp-cook"></div>`;
+    card.innerHTML = `
+      <h3 style="margin-top:0">Что приготовить из запасов</h3>
+      <div class="sk-seg sk-seg-wide" id="match-modes" role="tablist" aria-label="Режим подбора">
+        <button type="button" data-mode="strict" class="${mode === "strict" ? "active" : ""}">Строго</button>
+        <button type="button" data-mode="almost" class="${mode === "almost" ? "active" : ""}">Почти</button>
+        <button type="button" data-mode="urgent" class="${mode === "urgent" ? "active" : ""}">Срочно</button>
+      </div>
+      <p class="sk-meta" id="match-lead">${
+        mode === "strict"
+          ? "Только блюда, для которых всё уже есть."
+          : mode === "urgent"
+            ? exp.size
+              ? "Сначала то, что спасёт продукты со сроком."
+              : "Нет позиций со сроком — покажем почти из запасов."
+            : "Можно добрать 1–2 недорогих позиции."
+      }</p>
+      <div class="sk-chip-row" id="stock-cook"></div>`;
     body.prepend(card);
+    $$("#match-modes [data-mode]").forEach((b) => {
+      b.onclick = () => {
+        state._matchMode = b.dataset.mode;
+        renderInventory();
+      };
+    });
+    const box = card.querySelector("#stock-cook");
+    if (!matches.length) {
+      box.innerHTML = `<div class="sk-meta">Нет подходящих блюд в этом режиме — смените режим или пополните запасы.</div>`;
+      return;
+    }
     matches.forEach((m) => {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "sk-chip";
-      b.textContent = `${m.dish.name} · ${Math.round(m.coverage * 100)}%`;
+      b.textContent = `${m.dish.name} · ${Math.round(m.coverage * 100)}% · ${m.why}`;
       b.onclick = () => openRecipe(m.dish.id);
-      card.querySelector("#exp-cook").appendChild(b);
+      box.appendChild(b);
     });
   }
 
@@ -574,7 +638,7 @@ export function createStockUi(ctx) {
     });
 
     paintInvRows();
-    renderCookFromExpiring(body);
+    renderMatchFromStock(body);
 
     $("#inv-q").oninput = (e) => {
       state._invQ = e.target.value;
@@ -1090,6 +1154,7 @@ export function createStockUi(ctx) {
           brand: it.brand || "",
         });
         if (it.photo && p) p.photo = it.photo;
+        if (price > 0) applyPurchasePrice(it.productId, price, it.amount);
       }
       if (price > 0) {
         state.events.push(
@@ -1202,7 +1267,7 @@ export function createStockUi(ctx) {
     };
   }
 
-  /* ——— PERIOD ——— */
+  /* ——— СБОРКА (period) ——— */
   function renderPeriod() {
     const root = $("#screen-period");
     const per = state.settings.period || {};
@@ -1228,10 +1293,10 @@ export function createStockUi(ctx) {
             </select>
           </label>
         </div>
-        <p class="sk-meta">Оценка ₽: из ваших покупок, иначе каталог. Batch = блюда на 2+ дня и подсказки «варка / разогрев».</p>
+        <p class="sk-meta">Авточерновик — меню на N дней. «В меню» принимает черновик. Оценка ₽: из ваших покупок, иначе каталог.</p>
         <div class="sk-row">
-          <button class="sk-btn sk-btn-accent" id="per-build">Собрать</button>
-          <button class="sk-btn sk-btn-primary" id="per-apply">В план</button>
+          <button class="sk-btn sk-btn-accent" id="per-build">Авточерновик</button>
+          <button class="sk-btn sk-btn-primary" id="per-apply">В меню</button>
         </div>
       </div>
       <div id="per-out"></div>`;
@@ -1240,7 +1305,7 @@ export function createStockUi(ctx) {
     const draw = (plan, cost) => {
       const bal = proteinBalance(plan, state.cat.dishes);
       const cookDays = plan.filter((d) => d.isCookDay).length || Math.ceil(plan.length / 3);
-      $("#per-out").innerHTML = `<div class="sk-forecast"><div><div class="sk-meta">Оценка периода</div><div class="sk-kpi">${rub(cost)}</div></div>
+      $("#per-out").innerHTML = `<div class="sk-forecast"><div><div class="sk-meta">Оценка сборки</div><div class="sk-kpi">${rub(cost)}</div></div>
         <div><div class="sk-meta">Дней / варок</div><div class="sk-kpi" style="font-size:1.2rem">${plan.length} / ~${cookDays}</div></div>
         <div><div class="sk-meta">Белок</div><div class="sk-meta">кур ${bal.chicken} · свин ${bal.pork} · гов ${bal.beef} · рыб ${bal.fish}</div></div></div>
         <div class="sk-grid" id="per-grid"></div>`;
@@ -1266,11 +1331,7 @@ export function createStockUi(ctx) {
       state._periodDraft = plan;
     };
 
-    if (state._periodDraft?.length) {
-      draw(state._periodDraft, estimatePlanCostSmart(state._periodDraft, state.cat.dishes, state.cat.products, avg));
-    }
-
-    $("#per-build").onclick = () => {
+    const runBuild = (silent = false) => {
       const cap = +$("#per-cap").value || 0;
       const opts = {
         startDate: $("#per-start").value,
@@ -1331,7 +1392,6 @@ export function createStockUi(ctx) {
         }
       }
       plan = markBatchHints(plan, state.cat.dishes);
-      // budget filter: swap expensive dinners for cheaper alternatives
       if (cap > 0) {
         let cost = estimatePlanCostSmart(plan, state.cat.dishes, state.cat.products, avg);
         let guard = 0;
@@ -1368,15 +1428,25 @@ export function createStockUi(ctx) {
       };
       const cost = estimatePlanCostSmart(plan, state.cat.dishes, state.cat.products, avg);
       draw(plan, cost);
-      toast(cap && cost > cap ? `Собрали, но оценка ${rub(cost)} выше лимита` : "Готово");
+      if (!silent) {
+        toast(cap && cost > cap ? `Черновик готов, оценка ${rub(cost)} выше лимита` : "Авточерновик готов");
+      }
     };
 
+    $("#per-build").onclick = () => runBuild(false);
     $("#per-apply").onclick = async () => {
-      if (!state._periodDraft?.length) return toast("Сначала соберите");
+      if (!state._periodDraft?.length) return toast("Сначала авточерновик");
       state.plan = state._periodDraft;
       await persistLocal();
       setScreen("plan");
+      toast("Принято в меню");
     };
+
+    if (state._periodDraft?.length) {
+      draw(state._periodDraft, estimatePlanCostSmart(state._periodDraft, state.cat.dishes, state.cat.products, avg));
+    } else {
+      runBuild(true);
+    }
   }
 
   function onCooked(d, form) {
