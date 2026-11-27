@@ -4,3 +4,20 @@ Thumbs.db
 .idea/
 .vscode/
 node_modules/
+
+# secrets — никогда в git
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+secrets/
+.secrets/
+cloud-api/.dev.vars
+cloud-api/.wrangler/
+**/*API*Key*.txt
+**/Google API Key.txt
+**/credentials*.txt
+**/доступы*.txt
+*-credentials.txt
+.wrangler/

@@ -1,0 +1,4 @@
+# Локально для wrangler dev (файл .dev.vars в git НЕ коммитится)
+# Скопируйте: copy .dev.vars.example .dev.vars
+# Значение возьмите из Desktop\Google API Key.txt — не вставляйте ключ в git.
+GEMINI_API_KEY=

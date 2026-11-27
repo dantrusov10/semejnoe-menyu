@@ -11,15 +11,23 @@
 
 Ключ Gemini: https://aistudio.google.com/apikey (бесплатный tier).
 
+## Безопасность ключа
+
+- Ключ **не** хранится в GitHub и не должен попадать в клиентский JS.
+- Прод: только **Cloudflare Worker Secret** `GEMINI_API_KEY` (шифруется на стороне CF).
+- Локально: `cloud-api/.dev.vars` (в `.gitignore`).
+- Файл на рабочем столе `Google API Key.txt` — только у вас на ПК, не в репо.
+- Скрипт `cloud-api/scripts/put-gemini-secret.ps1` читает ключ с Desktop и шлёт в CF Secrets, не коммитя его.
+
 ## Один раз настроить Worker
 
-```bash
+```powershell
 cd cloud-api
-npx wrangler secret put GEMINI_API_KEY
-# вставить ключ из AI Studio
-
-npx wrangler deploy
+npx wrangler login
+.\scripts\put-gemini-secret.ps1
 ```
+
+Или вручную: `npx wrangler secret put GEMINI_API_KEY` (вставить ключ) → `npx wrangler deploy`.
 
 Workers AI включается строкой `[ai] binding = "AI"` в `wrangler.toml` (уже есть).
 
