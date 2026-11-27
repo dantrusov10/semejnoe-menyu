@@ -1,6 +1,14 @@
 /* Service worker: сеть первой для оболочки, кэш как запасной; локальные уведомления */
-const CACHE = "sk-shell-v11";
-const ASSETS = ["./", "./index.html", "./app/css/app.css", "./app/js/app.js", "./manifest.webmanifest"];
+const CACHE = "sk-shell-v12";
+const ASSETS = [
+  "./",
+  "./index.html",
+  "./app/css/app.css",
+  "./app/js/app.js",
+  "./manifest.webmanifest",
+  "./icons/icon.svg",
+  "./icons/icon-maskable.svg",
+];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS).catch(() => {})).then(() => self.skipWaiting()));
@@ -12,6 +20,10 @@ self.addEventListener("activate", (e) => {
   );
 });
 
+self.addEventListener("message", (e) => {
+  if (e.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== self.location.origin) return;
@@ -21,6 +33,7 @@ self.addEventListener("fetch", (e) => {
     url.pathname.endsWith(".js") ||
     url.pathname.endsWith(".css") ||
     url.pathname.endsWith(".html") ||
+    url.pathname.endsWith(".webmanifest") ||
     url.pathname.endsWith("/") ||
     url.pathname.endsWith("/semejnoe-menyu");
 

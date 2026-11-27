@@ -283,12 +283,38 @@ function updateSyncBadge() {
 
 const MORE_SCREENS = new Set(["period", "recipes", "stats", "budget", "sync"]);
 
-function closeMoreSheet() {
-  $("#more-sheet")?.setAttribute("hidden", "");
+function isMobileNav() {
+  return window.matchMedia("(max-width: 860px)").matches;
 }
 
+function closeDrawer() {
+  $("#side-nav")?.classList.remove("open");
+  $("#drawer-backdrop")?.setAttribute("hidden", "");
+  document.body.classList.remove("sk-drawer-open");
+  const btn = $("#menu-btn");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+function openDrawer() {
+  if (!isMobileNav()) return;
+  $("#side-nav")?.classList.add("open");
+  $("#drawer-backdrop")?.removeAttribute("hidden");
+  document.body.classList.add("sk-drawer-open");
+  const btn = $("#menu-btn");
+  if (btn) btn.setAttribute("aria-expanded", "true");
+}
+
+function toggleDrawer() {
+  if ($("#side-nav")?.classList.contains("open")) closeDrawer();
+  else openDrawer();
+}
+
+/** @deprecated alias — «Ещё» открывает полное боковое меню */
+function closeMoreSheet() {
+  closeDrawer();
+}
 function openMoreSheet() {
-  $("#more-sheet")?.removeAttribute("hidden");
+  openDrawer();
 }
 
 function syncNavUi(name) {
@@ -296,7 +322,67 @@ function syncNavUi(name) {
   $$("#tabbar [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
   const moreBtn = $("#tabbar [data-more]");
   if (moreBtn) moreBtn.classList.toggle("active", MORE_SCREENS.has(name));
-  $$("#more-sheet [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
+}
+
+function bindEdgeSwipeDrawer() {
+  let x0 = 0;
+  let y0 = 0;
+  let tracking = false;
+  document.addEventListener(
+    "touchstart",
+    (e) => {
+      if (!isMobileNav() || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      x0 = t.clientX;
+      y0 = t.clientY;
+      tracking = x0 <= 28 || $("#side-nav")?.classList.contains("open");
+    },
+    { passive: true }
+  );
+  document.addEventListener(
+    "touchend",
+    (e) => {
+      if (!tracking || !isMobileNav()) return;
+      tracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - x0;
+      const dy = t.clientY - y0;
+      if (Math.abs(dy) > 70) return;
+      const open = $("#side-nav")?.classList.contains("open");
+      if (!open && x0 <= 28 && dx > 56) openDrawer();
+      else if (open && dx < -56) closeDrawer();
+    },
+    { passive: true }
+  );
+}
+
+function watchServiceWorkerUpdates() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.ready.then((reg) => {
+    const show = () => {
+      const ban = $("#update-banner");
+      if (ban) ban.hidden = false;
+    };
+    if (reg.waiting) show();
+    reg.addEventListener("updatefound", () => {
+      const w = reg.installing;
+      w?.addEventListener("statechange", () => {
+        if (w.state === "installed" && navigator.serviceWorker.controller) show();
+      });
+    });
+  });
+  $("#update-reload")?.addEventListener("click", async () => {
+    const reg = await navigator.serviceWorker.getRegistration();
+    reg?.waiting?.postMessage?.({ type: "SKIP_WAITING" });
+    // fallback: hard reload
+    setTimeout(() => location.reload(), 120);
+  });
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshing) return;
+    refreshing = true;
+    location.reload();
+  });
 }
 
 async function syncPull(preferCloud = true) {
@@ -394,7 +480,7 @@ function bindHintDismiss(root) {
 
 function setScreen(name) {
   state.screen = name;
-  closeMoreSheet();
+  closeDrawer();
   syncNavUi(name);
   $$(".sk-panel").forEach((p) => p.classList.toggle("active", p.id === `screen-${name}`));
   const meta = PAGE_META[name] || [name, ""];
@@ -1712,13 +1798,12 @@ async function boot() {
   $$("#tabbar [data-screen]").forEach((b) => {
     b.onclick = () => setScreen(b.dataset.screen);
   });
-  $("#tabbar [data-more]")?.addEventListener("click", () => openMoreSheet());
-  $$("#more-sheet [data-close-more]").forEach((b) => {
-    b.onclick = () => closeMoreSheet();
-  });
-  $$("#more-sheet [data-screen]").forEach((b) => {
-    b.onclick = () => setScreen(b.dataset.screen);
-  });
+  $("#tabbar [data-more]")?.addEventListener("click", () => openDrawer());
+  $("#menu-btn")?.addEventListener("click", () => toggleDrawer());
+  $("#drawer-backdrop")?.addEventListener("click", () => closeDrawer());
+  $("#drawer-close")?.addEventListener("click", () => closeDrawer());
+  bindEdgeSwipeDrawer();
+  watchServiceWorkerUpdates();
 
   state.settings.profile = "command";
   updateSyncBadge();

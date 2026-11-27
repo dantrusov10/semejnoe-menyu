@@ -1,17 +1,30 @@
 {
+  "id": "./",
   "name": "Семейная кухня · Богданиха",
   "short_name": "Кухня",
+  "description": "Меню, запасы, покупки и бюджет семьи",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#f4efe6",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#e7ebf0",
   "theme_color": "#1f3a56",
   "lang": "ru",
+  "dir": "ltr",
+  "categories": ["food", "lifestyle", "utilities"],
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='28' fill='%231f3a56'/%3E%3Ctext x='64' y='78' text-anchor='middle' font-size='56' fill='%23f4efe6'%3E🍽%3C/text%3E%3C/svg%3E",
-      "sizes": "128x128",
+      "src": "icons/icon.svg",
+      "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ]
 }
