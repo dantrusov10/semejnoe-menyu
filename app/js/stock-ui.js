@@ -30,6 +30,7 @@ import {
 import { makeEvent } from "./sync.js";
 import { productIcon } from "./icons.js";
 import { avgUnitPrices, estimatePlanCostSmart, estimateDishCost, guessSpendCategory, SPEND_LABELS, priceHistory } from "./stats.js";
+import { aiVision, compressImageFile, aiQuota } from "./ai.js";
 
 const SHOP_TEMPLATES = [
   {
@@ -278,15 +279,101 @@ export function createStockUi(ctx) {
     $("#productModal")?.classList.remove("show");
   }
 
+  function openVisionDraft(items, unknown) {
+    $("#productModalTitle").textContent = "Черновик с фото";
+    $("#productModalBody").innerHTML = `
+      <p class="sk-meta">Проверьте позиции и отметьте, что добавить в запас. Неопознанное можно завести вручную.</p>
+      ${unknown?.length ? `<div class="sk-note">Неясно: ${unknown.join(", ")}</div>` : ""}
+      <div id="vis-list" style="margin-top:10px"></div>
+      <div class="sk-row" style="margin-top:12px">
+        <button class="sk-btn sk-btn-primary" id="vis-apply">Добавить отмеченные</button>
+        <button class="sk-btn sk-btn-ghost" id="vis-cancel">Закрыть</button>
+      </div>`;
+    const list = $("#vis-list");
+    items.forEach((it, idx) => {
+      const row = document.createElement("div");
+      row.className = "shop-item";
+      row.innerHTML = `
+        <input type="checkbox" data-on ${it.confidence >= 0.5 ? "checked" : ""} />
+        <div style="flex:1">
+          <input class="sk-input" data-name value="${(it.nameGuess || "").replace(/"/g, "&quot;")}" />
+          <div class="sk-row" style="margin-top:6px;gap:6px">
+            <input class="sk-input" type="number" min="0" step="any" data-qty value="${it.qty || 1}" style="max-width:90px" />
+            <select class="sk-select" data-unit style="max-width:90px">${ALL_UNITS.map((u) => `<option value="${u.value}" ${u.value === (it.unit || "pcs") ? "selected" : ""}>${u.label}</option>`).join("")}</select>
+            <span class="sk-meta">${it.productId ? "в каталоге" : "новый"} · ${Math.round((it.confidence || 0) * 100)}%</span>
+          </div>
+        </div>`;
+      row.dataset.idx = String(idx);
+      row._it = it;
+      list.appendChild(row);
+    });
+    $("#vis-cancel").onclick = () => closeProductModal();
+    $("#vis-apply").onclick = async () => {
+      let n = 0;
+      [...list.children].forEach((row) => {
+        if (!row.querySelector("[data-on]")?.checked) return;
+        const name = row.querySelector("[data-name]").value.trim();
+        const qty = +row.querySelector("[data-qty]").value || 0;
+        const unit = row.querySelector("[data-unit]").value;
+        if (!name || !qty) return;
+        let p = row._it.productId ? state.cat.products[row._it.productId] : null;
+        if (!p) {
+          p = allProducts().find((x) => x.name.toLowerCase() === name.toLowerCase());
+        }
+        if (!p) p = registerCustomProduct({ name, unit });
+        const amount = toBaseAmount(qty, unit, p);
+        state.inventory = addInvAmount(state.inventory, p.id, amount, {
+          zone: p.defaultZone || "pantry",
+          boughtAt: new Date().toISOString().slice(0, 10),
+        });
+        n += 1;
+      });
+      await saveInventoryAndSync();
+      closeProductModal();
+      toast(n ? `В запас +${n}` : "Ничего не отмечено");
+      renderInventory();
+    };
+  }
+
   function openRestockFlow() {
     $("#productModalTitle").textContent = "Пополнить";
     $("#productModalBody").innerHTML = `
-      <p class="sk-meta">Что появилось дома в обход списка покупок — выберите из каталога или создайте новое.</p>
+      <p class="sk-meta">Что появилось дома в обход списка покупок — выберите из каталога, создайте новое или сфотографируйте полку.</p>
+      <div class="sk-row" style="margin-bottom:12px">
+        <label class="sk-btn sk-btn-accent" style="cursor:pointer">С фото
+          <input type="file" id="rs-photo" accept="image/*" capture="environment" hidden />
+        </label>
+        <span class="sk-meta" id="rs-ai-quota"></span>
+      </div>
       <div class="shop-ac" style="margin-bottom:12px">
         <input class="sk-input sk-input-lg" id="rs-q" placeholder="Начните вводить название…" />
         <div class="shop-ac-list" id="rs-ac" style="display:none"></div>
       </div>
       <button class="sk-btn sk-btn-ghost sk-btn-block" id="rs-new">Создать новый продукт</button>`;
+    aiQuota().then((q) => {
+      if (q && $("#rs-ai-quota")) {
+        $("#rs-ai-quota").textContent = q.gemini
+          ? `фото сегодня ${q.vision}/${q.visionLimit}`
+          : "vision: нужен GEMINI_API_KEY на Worker";
+      }
+    });
+    $("#rs-photo")?.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        toast("Распознаём…");
+        const { dataUrl, mimeType } = await compressImageFile(file);
+        const knownProducts = allProducts().map((p) => ({ id: p.id, name: p.name, unit: p.unit }));
+        const res = await aiVision({ image: dataUrl, mimeType, knownProducts });
+        if (!res.items?.length) {
+          toast(res.unknown?.length ? "Ничего не распознали" : "Пусто");
+          return;
+        }
+        openVisionDraft(res.items, res.unknown);
+      } catch (err) {
+        toast(err.message || "Vision ошибка");
+      }
+    });
     const ac = $("#rs-ac");
     const rsQ = $("#rs-q");
     rsQ.oninput = () => {
@@ -302,7 +389,7 @@ export function createStockUi(ctx) {
         .map((p) => `<button type="button" data-id="${p.id}">${productIcon(p)} ${p.name} <span class="sk-meta">${p.category || ""}</span></button>`)
         .join("");
       ac.querySelectorAll("button").forEach((b) => {
-        b.onmousedown = (e) => e.preventDefault();
+        b.onmousedown = (ev) => ev.preventDefault();
         b.onclick = () => openProductModal(b.dataset.id, "restock");
       });
     };

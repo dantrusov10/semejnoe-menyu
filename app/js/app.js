@@ -51,6 +51,7 @@ import {
   dayjs,
 } from "./stats.js";
 import { initReminders, ensureNotifyPermission, maybeEveningReminder } from "./notify.js";
+import { aiSuggest, aiQuota } from "./ai.js";
 
 const state = {
   data: null,
@@ -940,23 +941,74 @@ function bindRecipeActions(d, root) {
     await persistLocal();
     toast("В любимых");
   });
-  root.querySelector('[data-act="replace"]')?.addEventListener("click", () => {
+  root.querySelector('[data-act="replace"]')?.addEventListener("click", async () => {
     const box = root.querySelector("[data-replace-box]");
     const list = suggestReplacements(d, state.data.dishes, state.settings, { limit: 6 });
     if (!list.length) {
       box.innerHTML = `<div class="sk-note">Пока нет похожих замен.</div>`;
       return;
     }
-    box.innerHTML = `<div class="sk-card" style="margin-top:10px"><h3 style="margin-top:0">Похожие блюда</h3><p class="sk-meta">Скорер по типу, белку, цене и дням. LLM можно подключить поверх этого shortlist.</p><div class="sk-chip-row" data-repl></div></div>`;
+    box.innerHTML = `<div class="sk-card" style="margin-top:10px"><h3 style="margin-top:0">Умная замена</h3><p class="sk-meta" data-ai-status>Считаем…</p><div class="sk-chip-row" data-repl></div></div>`;
     const row = box.querySelector("[data-repl]");
-    list.forEach((r) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "sk-chip";
-      b.textContent = `${r.dish.name} · ${r.why}`;
-      b.onclick = () => openRecipe(r.dish.id);
-      row.appendChild(b);
-    });
+    const status = box.querySelector("[data-ai-status]");
+    const paintLocal = (items, note) => {
+      if (status) status.textContent = note || "Локальный скорер";
+      row.innerHTML = "";
+      items.forEach((r) => {
+        const dishObj = r.dish || state.cat.dishes[r.id];
+        if (!dishObj) return;
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "sk-chip";
+        b.textContent = `${dishObj.name} · ${r.reason || r.why || ""}`;
+        b.onclick = () => openRecipe(dishObj.id);
+        row.appendChild(b);
+      });
+    };
+    paintLocal(list, "Локальный скорер · уточняем через AI…");
+    try {
+      const amt = inventoryAmounts(state.inventory);
+      const inventoryTop = Object.entries(amt)
+        .filter(([, v]) => v > 0)
+        .slice(0, 25)
+        .map(([id, qty]) => ({ id, name: state.cat.products[id]?.name, qty }));
+      const expiringIds = Object.entries(state.inventory || {})
+        .filter(([, lot]) => {
+          const s = expiryStatus(lot.expiresAt, 3);
+          return s === "soon" || s === "expired";
+        })
+        .map(([id]) => id);
+      const fc = monthForecast(state.events, budgetPlanTotal());
+      const ai = await aiSuggest({
+        mode: "replace",
+        currentId: d.id,
+        meal: readPlanForm(root, d).meal,
+        shortlist: list.map((r) => ({
+          id: r.dish.id,
+          name: r.dish.name,
+          protein: r.dish.protein,
+          type: r.dish.type,
+          costPerServing: r.dish.costPerServing,
+          batchDays: r.dish.batchDays,
+          why: r.why,
+        })),
+        inventoryTop,
+        expiringIds,
+        childRules: state.settings.childRules,
+        budgetPace: { projected: fc.projected, plan: fc.plan, over: fc.over },
+        loved: state.settings.loved || [],
+        disliked: state.settings.disliked || [],
+      });
+      const ranked = (ai.ranked || [])
+        .map((r) => ({ id: r.id, dish: state.cat.dishes[r.id], reason: r.reason }))
+        .filter((r) => r.dish);
+      paintLocal(
+        ranked.length ? ranked : list,
+        `${ai.source === "ai" ? "AI" : "скорер"} · ${ai.provider || ""}${ai.quota ? ` · сегодня ${ai.quota.suggest}/${ai.quota.suggestLimit}` : ""}${ai.note ? ` · ${ai.note}` : ""}`
+      );
+    } catch (e) {
+      paintLocal(list, e.code === "quota" ? e.message : `AI недоступен — скорер (${e.message})`);
+    }
   });
 
   root.querySelector('[data-act="cooked"]')?.addEventListener("click", () => {

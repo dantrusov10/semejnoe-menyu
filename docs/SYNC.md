@@ -18,3 +18,15 @@ Worker создан на preview-аккаунте. Чтобы он не истё
 3. Готово — облако становится постоянным
 
 Если ссылка истекла — напишите агенту пересоздать Worker.
+
+## AI (free tier)
+
+См. [LLM.md](./LLM.md). Нужно один раз:
+
+```bash
+cd cloud-api
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler deploy
+```
+
+Ключ: https://aistudio.google.com/apikey
