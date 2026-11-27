@@ -36,26 +36,108 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-body.profile-kitchen [data-cmd-only] { display: none !important; }
-
 a { color: var(--accent); }
 button, input, select, textarea { font: inherit; color: inherit; }
 
+/* ——— Layout with side nav ——— */
+.sk-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+.sk-side {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  padding: 18px 14px;
+  border-right: 1px solid var(--line);
+  background: linear-gradient(180deg, #f4f6f9, #e9eef4);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.sk-side-brand {
+  font-family: var(--display);
+  font-weight: 750;
+  font-size: 1.15rem;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  padding: 4px 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.sk-side-brand span {
+  display: block;
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-2);
+  margin-bottom: 4px;
+}
+.sk-side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  overflow: auto;
+}
+.sk-side-nav button {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--muted);
+}
+.sk-side-nav button.active {
+  background: var(--accent);
+  color: #fff;
+}
+.sk-side-foot { padding: 8px; }
+
+@media (max-width: 860px) {
+  .sk-layout { grid-template-columns: 1fr; }
+  .sk-side {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .sk-side-brand { border: 0; padding: 0 8px; flex: 1; font-size: 1rem; }
+  .sk-side-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    width: 100%;
+    gap: 4px;
+  }
+  .sk-side-nav button { flex: 0 0 auto; }
+  .sk-side-foot { display: none; }
+}
+
 /* ——— Shell ——— */
 .sk-shell {
-  max-width: 1120px;
+  max-width: 1100px;
   margin: 0 auto;
   padding: var(--pad);
   padding-bottom: 96px;
+  width: 100%;
 }
 
 .sk-top {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 16px;
-  align-items: end;
+  grid-template-columns: 1fr;
+  gap: 8px;
   margin-bottom: 18px;
-  padding-bottom: 18px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -128,40 +210,125 @@ button, input, select, textarea { font: inherit; color: inherit; }
   color: #fff;
 }
 
-.sk-nav {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  margin: 0 0 22px;
-  padding-bottom: 4px;
-  -webkit-overflow-scrolling: touch;
+.recipe-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
 }
-.sk-nav button {
-  flex: 0 0 auto;
-  border: 1px solid transparent;
-  background: transparent;
-  min-height: var(--touch);
-  padding: 0 14px;
-  border-radius: 14px;
+.recipe-pick {
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 12px 14px;
   cursor: pointer;
+  min-height: 96px;
+  display: grid;
+  gap: 6px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.recipe-pick:hover { border-color: var(--accent-2); }
+.recipe-pick.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent-2); }
+.recipe-pick .ico { font-size: 1.35rem; }
+.recipe-count { font-weight: 750; color: var(--muted); margin: 8px 0 12px; }
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.cal-cell {
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 6px 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.cal-cell.muted { opacity: 0.35; cursor: default; }
+.cal-cell.today { border-color: var(--accent-2); background: #f7efdf; }
+.cal-cell.has { box-shadow: inset 0 -3px 0 var(--ok); }
+.cal-dow {
+  text-align: center;
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.prod-ico {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  flex: 0 0 auto;
+}
+.kbju-table { width: auto; min-width: 220px; font-size: 0.85rem; }
+.kbju-table th, .kbju-table td { padding: 4px 10px; border-bottom: 1px solid var(--line); }
+.inv-expand {
+  display: none;
+  grid-column: 1 / -1;
+  padding: 12px;
+  background: var(--surface-2);
+  border-radius: 12px;
+  margin: 4px 0 10px;
+}
+.inv-row.open + .inv-expand, tr.inv-row.open + tr .inv-expand { display: block; }
+tr.inv-detail td { background: var(--surface-2); padding: 12px 14px; }
+.stats-toggles { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.stats-toggles label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 0.85rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+.shop-ac {
   position: relative;
+  flex: 1;
+  min-width: 180px;
 }
-.sk-nav button.active {
-  color: var(--ink);
-  background: var(--surface);
-  border-color: var(--line);
-}
-.sk-nav button.active::after {
-  content: "";
+.shop-ac-list {
   position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: 6px;
-  height: 2px;
-  background: var(--accent-2);
-  border-radius: 2px;
+  left: 0; right: 0; top: 100%;
+  z-index: 15;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  max-height: 220px;
+  overflow: auto;
+  box-shadow: 0 12px 30px rgba(20,27,36,.12);
+}
+.shop-ac-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.shop-ac-list button:hover { background: var(--surface-2); }
+.price-pop {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 6px;
 }
 
 /* ——— Surfaces ——— */

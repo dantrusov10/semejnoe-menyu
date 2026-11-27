@@ -76,7 +76,46 @@ function explainReplace(from, to) {
   return bits.join(" · ");
 }
 
-/** План на произвольный период от даты старта */
+function recentCookIds(events, days = 21) {
+  const cut = Date.now() - days * 86400000;
+  const ids = new Set();
+  for (const e of events || []) {
+    if (e.type !== "cook" || !e.recipeId) continue;
+    if (new Date(e.at).getTime() >= cut) ids.add(e.recipeId);
+  }
+  return ids;
+}
+
+function pickVaried(pool, used, settings, recent, rng) {
+  if (!pool.length) return null;
+  const scored = pool.map((d) => {
+    let s = rng();
+    if (settings.loved?.includes(d.id)) s += 2.5;
+    if (recent.has(d.id)) s -= 3;
+    if (used.has(d.id)) s -= 4;
+    if (settings.disliked?.includes(d.id) || isBanned(d.id, settings)) s -= 100;
+    return { d, s };
+  });
+  scored.sort((a, b) => b.s - a.s);
+  const top = scored.slice(0, Math.min(8, scored.length));
+  return top[Math.floor(rng() * top.length)]?.d || scored[0].d;
+}
+
+/** mulberry32 — стабильный «рандом» от seed */
+function rngFromSeed(seed) {
+  let t = seed >>> 0;
+  return () => {
+    t += 0x6d2b79f5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * План на период с разнообразием: любимое↑, недавно ели↓, без повторов в окне.
+ * seed меняется каждый сбор → разное меню.
+ */
 export function buildPeriodPlan(data, settings, opts = {}) {
   const days = Math.max(1, Math.min(90, +opts.days || 7));
   const start = opts.startDate ? new Date(opts.startDate) : new Date();
@@ -84,28 +123,50 @@ export function buildPeriodPlan(data, settings, opts = {}) {
   const adults = Math.max(0, +opts.adults || 2);
   const childPortions = Math.max(0, +opts.childPortions || 1);
   const childAge = opts.childAge ?? 1.5;
-  const weekNum = ((opts.weekNum || 1) - 1) % 12 + 1;
-  const template = draftWeekPlan(data, settings, weekNum);
+  const seed = opts.seed || Date.now();
+  const rng = rngFromSeed(seed >>> 0);
+  const recent = recentCookIds(opts.events || [], 21);
+  const blocked = (id) => settings.disliked?.includes(id) || isBanned(id, settings);
+
+  const byType = { breakfast: [], soup: [], main: [], snack: [], dessert: [] };
+  for (const d of data.dishes) {
+    if (blocked(d.id)) continue;
+    if (byType[d.type]) byType[d.type].push(d);
+  }
+
+  const used = new Set();
   const plan = [];
   for (let i = 0; i < days; i++) {
     const dt = new Date(start);
     dt.setDate(start.getDate() + i);
-    const tpl = template[i % 7];
     const iso = dt.toISOString().slice(0, 10);
     const dayName = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"][dt.getDay()];
+    const breakfast = pickVaried(byType.breakfast, used, settings, recent, rng);
+    const lunch = pickVaried(byType.soup.length ? byType.soup : byType.main, used, settings, recent, rng);
+    const dinner = pickVaried(byType.main, used, settings, recent, rng);
+    const snack = pickVaried(byType.snack.length ? byType.snack : byType.dessert, used, settings, recent, rng);
+    [breakfast, lunch, dinner, snack].forEach((d) => d && used.add(d.id));
+    // раз в 7 дней чуть чистим used чтобы длинные периоды не исчерпали пул
+    if (i > 0 && i % 7 === 0) used.clear();
+
     plan.push({
-      ...tpl,
       date: iso,
       dayName,
       label: `${dayName} ${dt.getDate()}.${String(dt.getMonth() + 1).padStart(2, "0")}`,
       day: i + 1,
       week: Math.floor(i / 7) + 1,
+      breakfast: breakfast?.id,
+      lunch: lunch?.id,
+      dinner: dinner?.id,
+      snacks: snack ? [snack.id] : [],
+      cookHint: i % 3 === 0 ? "День новой варки" : "Разогрев / лёгкая готовка",
       people: { adults, childPortions, childAge },
       meta: {
         breakfast: { people: adults + childPortions, adults, child: childPortions },
         lunch: { people: adults + childPortions, adults, child: childPortions },
         dinner: { people: adults + childPortions, adults, child: childPortions },
       },
+      seed,
     });
   }
   return plan;

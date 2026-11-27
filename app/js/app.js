@@ -23,6 +23,7 @@ import {
 } from "./engine.js";
 import { normalizeInventory, invAmount, setInvAmount } from "./inventory.js";
 import { createStockUi } from "./stock-ui.js";
+import { dishIcon } from "./icons.js";
 import {
   pullCloud,
   pushCloud,
@@ -162,26 +163,31 @@ async function saveInventoryAndSync() {
   await persistLocal();
 }
 
-function applyProfile() {
-  document.body.classList.toggle("profile-kitchen", state.settings.profile === "kitchen");
-  document.body.classList.toggle("profile-command", state.settings.profile === "command");
-  $$("[data-profile]").forEach((b) => b.classList.toggle("active", b.dataset.profile === state.settings.profile));
-  if (state.settings.profile === "kitchen" && ["budget", "stats"].includes(state.screen)) {
-    state.screen = "today";
-  }
-}
+const PAGE_META = {
+  plan: ["План", "Календарь и меню по дням — сегодня сверху."],
+  period: ["Период", "Собрать меню на N дней с разнообразием."],
+  inventory: ["Запасы", "Продукты и готовые блюда."],
+  basket: ["Покупки", "Единый список: из плана и руками. Цена — при покупке."],
+  recipes: ["Рецепты", "Поиск и фильтры по типу, белку, времени."],
+  stats: ["Статистика", "Что показывать — включаете сами."],
+  budget: ["Бюджет", "Факт из покупок + ручная корректировка."],
+  sync: ["Облако", "Синхронизация семьи."],
+};
 
 function setScreen(name) {
+  if (name === "today") name = "plan";
   state.screen = name;
   $$("#nav-list [data-screen]").forEach((b) => b.classList.toggle("active", b.dataset.screen === name));
   $$(".sk-panel").forEach((p) => p.classList.toggle("active", p.id === `screen-${name}`));
+  const meta = PAGE_META[name] || [name, ""];
+  if ($("#page-title")) $("#page-title").textContent = meta[0];
+  if ($("#page-lead")) $("#page-lead").textContent = meta[1];
   renderScreen();
 }
 
 function renderScreen() {
-  applyProfile();
   ({
-    today: renderToday,
+    today: renderPlan,
     plan: renderPlan,
     period: renderPeriod,
     inventory: renderInventory,
@@ -193,53 +199,69 @@ function renderScreen() {
   })[state.screen]?.();
 }
 
-/* ——— TODAY ——— */
-function renderToday() {
-  const idx = planDayIndex(state.plan);
-  const day = state.plan[idx];
-  const root = $("#screen-today");
-  if (!day) {
-    root.innerHTML = `<div class="sk-note">Плана нет — откройте «План» или добавьте блюдо из «Рецепты».</div>`;
-    return;
+/** Категория «без мяса» = category ИЛИ protein ИЛИ веге-тег */
+function matchesCategory(d, cat) {
+  if (cat === "all") return true;
+  if (d.category === cat) return true;
+  if (cat === "без мяса") {
+    return d.protein === "без мяса" || (d.tags || []).includes("веге") || (d.tags || []).includes("без мяса");
   }
-  const meals = [
-    ["Завтрак", "breakfast", day.breakfast],
-    ["Обед", "lunch", day.lunch],
-    ["Ужин", "dinner", day.dinner],
-    ["Перекус", "snack", day.snacks?.[0]],
-    ["Перекус 2", "snack", day.snacks?.[1]],
-  ];
-  root.innerHTML = `
-    <div class="sk-hero">
-      <div class="sk-chip-row">
-        <span class="sk-tag hot">Неделя ${state.weekNum}</span>
-        <span class="sk-tag">${day.dayName} · день ${idx + 1}/7</span>
-      </div>
-      <h1>${day.dayName}: что едим</h1>
-      <p>${day.cookHint || "Откройте блюдо или добавьте своё из раздела Рецепты."}</p>
+  return false;
+}
+
+function renderMonthCalendar(rootSel, plan) {
+  const box = $(rootSel);
+  if (!box) return;
+  const now = new Date();
+  const y = state._calY ?? now.getFullYear();
+  const m = state._calM ?? now.getMonth();
+  const first = new Date(y, m, 1);
+  const startPad = (first.getDay() + 6) % 7; // Mon=0
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const byDate = Object.fromEntries((plan || []).filter((d) => d.date).map((d) => [d.date, d]));
+  const monthName = first.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
+  box.innerHTML = `
+    <div class="sk-row" style="justify-content:space-between;margin-bottom:8px">
+      <button class="sk-btn sk-btn-ghost" id="cal-prev" style="min-height:40px">←</button>
+      <strong style="text-transform:capitalize">${monthName}</strong>
+      <button class="sk-btn sk-btn-ghost" id="cal-next" style="min-height:40px">→</button>
     </div>
-    <div class="sk-grid" id="today-meals"></div>
-    <div class="sk-row" style="margin-top:16px">
-      <button class="sk-btn sk-btn-accent" id="btn-cook-dinner">Готовлю ужин</button>
-      <button class="sk-btn sk-btn-ghost" id="btn-swap-dinner">Заменить ужин</button>
-      <button class="sk-btn sk-btn-ghost" id="btn-add-recipe">Добавить блюдо в план</button>
-      <button class="sk-btn sk-btn-ghost" id="btn-from-inv">Из запасов</button>
-    </div>`;
-  const box = $("#today-meals");
-  meals.forEach(([label, mealKey, id]) => {
-    const d = dish(id);
-    if (!d) return;
-    const meta = day.meta?.[mealKey];
-    const col = document.createElement("div");
-    col.className = "sk-col-4";
-    col.innerHTML = `<div class="sk-meal"><b>${label}</b><div><div style="font-weight:750">${d.name}</div><div class="sk-meta">${d.timeMin} мин · ${d.category}${meta ? ` · ${meta.people || "?"} чел · ${daysRu(meta.batchDays || 1)}` : ` · ${daysRu(d.batchDays)}`}</div></div><div class="price">~${rub(d.costPerServing)}</div></div>`;
-    col.querySelector(".sk-meal").onclick = () => openRecipe(id);
-    box.appendChild(col);
-  });
-  $("#btn-cook-dinner").onclick = () => openRecipe(day.dinner);
-  $("#btn-swap-dinner").onclick = () => swapMeal(idx, "dinner");
-  $("#btn-add-recipe").onclick = () => setScreen("recipes");
-  $("#btn-from-inv").onclick = () => setScreen("inventory");
+    <div class="cal-grid">${["пн","вт","ср","чт","пт","сб","вс"].map((d) => `<div class="cal-dow">${d}</div>`).join("")}<div id="cal-days" style="display:contents"></div></div>`;
+  const daysBox = $("#cal-days");
+  for (let i = 0; i < startPad; i++) {
+    const el = document.createElement("div");
+    el.className = "cal-cell muted";
+    daysBox.appendChild(el);
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const el = document.createElement("div");
+    const isToday = iso === now.toISOString().slice(0, 10);
+    const has = !!byDate[iso];
+    el.className = `cal-cell ${isToday ? "today" : ""} ${has ? "has" : ""}`;
+    el.innerHTML = `<b>${d}</b>${has ? `<div class="sk-meta">${byDate[iso].dayName || ""}</div>` : ""}`;
+    if (has) el.onclick = () => {
+      state._focusDate = iso;
+      renderPlan();
+    };
+    daysBox.appendChild(el);
+  }
+  $("#cal-prev").onclick = () => {
+    state._calM = m - 1;
+    if (state._calM < 0) {
+      state._calM = 11;
+      state._calY = y - 1;
+    }
+    renderPlan();
+  };
+  $("#cal-next").onclick = () => {
+    state._calM = m + 1;
+    if (state._calM > 11) {
+      state._calM = 0;
+      state._calY = y + 1;
+    }
+    renderPlan();
+  };
 }
 
 async function swapMeal(dayIndex, mealKey) {
@@ -255,65 +277,79 @@ async function swapMeal(dayIndex, mealKey) {
   renderScreen();
 }
 
-/* ——— PLAN ——— */
+/* ——— PLAN (сегодня + календарь + дни) ——— */
 function renderPlan() {
   const root = $("#screen-plan");
   const cost = estimatePlanCost(state.plan, state.cat.dishes);
-  const monthCap = Math.round((state.settings.cookingBudget || 32000) / 4);
-  const over = cost > monthCap;
+  const idx = planDayIndex(state.plan);
+  const today = state.plan[idx];
   root.innerHTML = `
-    <div class="sk-hero">
-      <h1>План недели</h1>
-      <p>Авточерновик или ручная сборка: люди, порции, на сколько дней готовите сразу.</p>
+    <div class="sk-forecast">
+      <div><div class="sk-meta">Прогноз плана</div><div class="sk-kpi">${rub(cost)}</div></div>
+      <div><div class="sk-meta">Дней в плане</div><div class="sk-kpi" style="font-size:1.2rem">${state.plan.length}</div></div>
     </div>
-    <div class="sk-forecast ${over ? "warn" : ""}">
-      <div>
-        <div class="sk-meta">Прогноз готовки на неделю</div>
-        <div class="sk-kpi">${rub(cost)}</div>
-      </div>
-      <div>
-        <div class="sk-meta">Ориентир ~¼ месячного лимита</div>
-        <div class="sk-kpi" style="font-size:1.2rem">${rub(monthCap)}</div>
-      </div>
-      <p class="sk-meta" style="grid-column:1/-1;margin:0">${over ? "Выше ориентира — упростите ужин или замените рыбу/мясо." : "В пределах ориентира. Корзина считает только отмеченные слоты."}</p>
+    <div class="sk-card tone" style="margin-bottom:14px" id="today-block"></div>
+    <div class="sk-card" style="margin-bottom:14px">
+      <h3 style="margin-top:0">Календарь</h3>
+      <div id="cal-wrap"></div>
     </div>
     <div class="sk-row">
-      <label class="sk-field">Неделя шаблона
-        <select class="sk-select" id="week-select">
-          ${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}" ${state.weekNum === i + 1 ? "selected" : ""}>${i + 1}</option>`).join("")}
-        </select>
-      </label>
-      <button class="sk-btn sk-btn-primary" id="gen-week">Авточерновик</button>
-      <button class="sk-btn sk-btn-ghost" id="to-basket-week">В корзину</button>
-      <button class="sk-btn sk-btn-accent" id="to-recipes">Добавить блюдо</button>
+      <button class="sk-btn sk-btn-accent" id="to-period">Собрать период</button>
+      <button class="sk-btn sk-btn-ghost" id="to-basket-week">В покупки</button>
+      <button class="sk-btn sk-btn-ghost" id="to-recipes">Рецепты</button>
+      <button class="sk-btn sk-btn-primary" id="gen-week">Шаблон недели</button>
     </div>
-    <div class="sk-grid" id="plan-grid"></div>`;
-  $("#week-select").onchange = (e) => (state.weekNum = +e.target.value);
+    <div class="sk-grid" id="plan-grid" style="margin-top:12px"></div>`;
+
+  if (today) {
+    $("#today-block").innerHTML = `
+      <div class="sk-row" style="justify-content:space-between;align-items:center;margin:0 0 8px">
+        <h2 style="margin:0">Сегодня · ${today.label || today.dayName}</h2>
+        <button class="sk-btn sk-btn-ghost" id="btn-swap-dinner" style="min-height:40px">Заменить ужин</button>
+      </div>
+      <p class="sk-meta">${today.cookHint || ""}</p>
+      <div class="sk-grid" id="today-meals"></div>`;
+    ["breakfast", "lunch", "dinner"].forEach((key) => {
+      const d = dish(today[key]);
+      if (!d) return;
+      const labels = { breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин" };
+      const col = document.createElement("div");
+      col.className = "sk-col-4";
+      col.innerHTML = `<div class="sk-meal"><b>${labels[key]}</b><div><div style="font-weight:750">${dishIcon(d)} ${d.name}</div><div class="sk-meta">${d.timeMin} мин · ${d.category}</div></div><div class="price">~${rub(d.costPerServing)}</div></div>`;
+      col.querySelector(".sk-meal").onclick = () => openRecipe(d.id);
+      $("#today-meals").appendChild(col);
+    });
+    $("#btn-swap-dinner").onclick = () => swapMeal(idx, "dinner");
+  }
+
+  renderMonthCalendar("#cal-wrap", state.plan);
+  $("#to-period").onclick = () => setScreen("period");
+  $("#to-basket-week").onclick = () => setScreen("basket");
+  $("#to-recipes").onclick = () => setScreen("recipes");
   $("#gen-week").onclick = async () => {
     state.plan = draftWeekPlan(state.data, state.settings, state.weekNum);
     await persistLocal();
-    toast("Неделя пересобрана");
+    toast("Шаблон недели");
     renderPlan();
   };
-  $("#to-basket-week").onclick = () => setScreen("basket");
-  $("#to-recipes").onclick = () => setScreen("recipes");
+
+  const focus = state._focusDate;
   const grid = $("#plan-grid");
-  state.plan.forEach((day, idx) => {
+  state.plan.forEach((day, dayIdx) => {
+    if (focus && day.date && day.date !== focus) return;
     const col = document.createElement("div");
     col.className = "sk-col-4";
-    const today = idx === planDayIndex(state.plan);
-    col.innerHTML = `<div class="sk-card ${today ? "tone" : ""}"><div class="sk-row" style="margin:0 0 8px;justify-content:space-between;align-items:center"><h2 style="margin:0;font-size:1.15rem">${day.dayName}${today ? " · сегодня" : ""}</h2><button class="sk-btn sk-btn-ghost" data-swap style="min-height:40px">Не хочу ужин</button></div><p class="sk-meta">${day.cookHint || ""}</p><div data-meals></div></div>`;
+    const isToday = dayIdx === idx || day.date === new Date().toISOString().slice(0, 10);
+    col.innerHTML = `<div class="sk-card ${isToday ? "tone" : ""}"><div class="sk-row" style="margin:0 0 8px;justify-content:space-between"><h2 style="margin:0;font-size:1.1rem">${day.label || day.dayName}</h2><button class="sk-btn sk-btn-ghost" data-swap style="min-height:40px">Не хочу ужин</button></div><div data-meals></div></div>`;
     const mealsBox = col.querySelector("[data-meals]");
     ["breakfast", "lunch", "dinner"].forEach((key) => {
       const d = dish(day[key]);
       if (!d) return;
       const labels = { breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин" };
-      const meta = day.meta?.[key];
       const row = document.createElement("div");
       row.className = "sk-meal";
       row.style.marginTop = "8px";
-      const span = meta?.batchDays || d.batchDays || 1;
-      row.innerHTML = `<b>${labels[key]}</b><div><div style="font-weight:750">${d.name}</div><div class="sk-meta">${meta ? `${meta.people || "?"} чел · ${daysRu(span)} · ${meta.servings || "?"} порц` : daysRu(span)}</div></div><div class="price">${span > 1 ? daysRu(span) : "~1 д"}</div>`;
+      row.innerHTML = `<b>${labels[key]}</b><div><div style="font-weight:750">${dishIcon(d)} ${d.name}</div><div class="sk-meta">${daysRu(d.batchDays)}</div></div><div class="price">~${rub(d.costPerServing)}</div>`;
       row.onclick = () => openRecipe(d.id);
       mealsBox.appendChild(row);
     });
@@ -321,11 +357,20 @@ function renderPlan() {
       e.stopPropagation();
       state.settings.bannedUntil = banForMonth(state.settings, day.dinner, 30);
       if (!state.settings.disliked.includes(day.dinner)) state.settings.disliked.push(day.dinner);
-      await swapMeal(idx, "dinner");
-      await persistLocal();
+      await swapMeal(dayIdx, "dinner");
     };
     grid.appendChild(col);
   });
+  if (focus) {
+    const clear = document.createElement("button");
+    clear.className = "sk-btn sk-btn-ghost";
+    clear.textContent = "Показать все дни";
+    clear.onclick = () => {
+      state._focusDate = null;
+      renderPlan();
+    };
+    grid.prepend(clear);
+  }
 }
 
 /* ——— STOCK UI (inventory / basket / period) ——— */
@@ -364,104 +409,95 @@ function mealTypeDefault(d) {
 
 function renderRecipes() {
   const root = $("#screen-recipes");
-  const cats = [...new Set(state.data.dishes.map((d) => d.category))].sort();
   const proteins = [...new Set(state.data.dishes.map((d) => d.protein))].sort();
+  const cats = [...new Set(state.data.dishes.map((d) => d.category))].sort();
   root.innerHTML = `
-    <div class="sk-hero">
-      <h1>Рецепты</h1>
-      <p>Выберите блюдо → укажите людей, порции и на сколько дней → добавьте в ближайший план.</p>
-    </div>
     <div class="sk-card" style="margin-bottom:14px">
       <div class="sk-row">
         <label class="sk-field" style="flex:1;min-width:180px">Поиск
-          <input class="sk-input sk-input-lg" id="recipe-q" placeholder="борщ, минтай, творог…" />
+          <input class="sk-input" id="recipe-q" placeholder="борщ, творог, минтай…" value="${state._recipeQ || ""}" />
         </label>
-        <label class="sk-field">Тип
-          <select class="sk-select" id="f-type"><option value="all">Все</option><option value="breakfast">Завтраки</option><option value="soup">Супы</option><option value="main">Основные</option><option value="snack">Перекусы</option><option value="dessert">Десерты</option></select>
+        <label class="sk-field">Приём / тип
+          <select class="sk-select" id="f-type">
+            <option value="all">Все</option>
+            <option value="breakfast">Завтраки</option>
+            <option value="soup">Супы</option>
+            <option value="main">Основные</option>
+            <option value="snack">Перекусы</option>
+            <option value="dessert">Десерты</option>
+          </select>
         </label>
-        <label class="sk-field">Категория
-          <select class="sk-select" id="f-cat"><option value="all">Все</option>${cats.map((c) => `<option value="${c}">${c}</option>`).join("")}</select>
-        </label>
-        <label class="sk-field">Белок
+        <label class="sk-field">Белок / рацион
           <select class="sk-select" id="f-protein"><option value="all">Все</option>${proteins.map((c) => `<option value="${c}">${c}</option>`).join("")}</select>
+        </label>
+        <label class="sk-field">Раздел
+          <select class="sk-select" id="f-cat"><option value="all">Все</option>${cats.map((c) => `<option value="${c}">${c}</option>`).join("")}</select>
         </label>
         <label class="sk-field">Время
           <select class="sk-select" id="f-time"><option value="all">Любое</option><option value="20">≤20</option><option value="40">≤40</option><option value="60">≤60</option></select>
         </label>
-        <label class="sk-field" style="min-width:180px">Теги
-          <select id="f-tags" multiple placeholder="Теги…"></select>
-        </label>
         <label class="sk-field" style="flex-direction:row;align-items:center;gap:8px;min-height:48px">
-          <input type="checkbox" id="f-batch" /> сразу на 2+ дня
-        </label>
-        <label class="sk-field" style="flex-direction:row;align-items:center;gap:8px;min-height:48px">
-          <input type="checkbox" id="f-child" /> для ребёнка
+          <input type="checkbox" id="f-batch" /> на 2+ дня
         </label>
       </div>
+      <p class="sk-meta" style="margin:8px 0 0">«Завтраки» + белок «без мяса» — ок. Раздел «без мяса» тоже ловит завтраки и веге.</p>
     </div>
-    <div class="recipe-layout-desk">
-      <div class="sk-list recipe-list-pane" id="recipe-list"></div>
-      <div class="sk-card" id="recipe-view"><p class="sk-meta">Выберите рецепт слева или откройте карточку</p></div>
-    </div>`;
-
-  const allTags = [...new Set(state.data.dishes.flatMap((d) => d.tags || []))].sort();
-  const ts = new TomSelect("#f-tags", {
-    plugins: ["remove_button"],
-    options: allTags.map((t) => ({ value: t, text: t })),
-    maxOptions: 50,
-  });
+    <div class="recipe-count" id="recipe-count"></div>
+    <div class="recipe-pick-grid" id="recipe-list"></div>`;
 
   fuse = new Fuse(state.data.dishes, {
-    keys: ["name", "description", "category", "tags", "protein", "steps"],
-    threshold: 0.35,
+    keys: ["name", "description", "category", "tags", "protein"],
+    threshold: 0.38,
   });
 
   const redraw = () => {
     const q = ($("#recipe-q").value || "").trim();
+    state._recipeQ = q;
     const type = $("#f-type").value;
     const cat = $("#f-cat").value;
     const protein = $("#f-protein").value;
     const time = $("#f-time").value;
-    const tags = ts.getValue();
     const batchOnly = $("#f-batch").checked;
-    const child = $("#f-child").checked;
-    let list = q ? fuse.search(q).map((x) => x.item) : state.data.dishes;
+    let list = q ? fuse.search(q).map((x) => x.item) : state.data.dishes.slice();
     list = list.filter((d) => {
       if (type !== "all" && d.type !== type) return false;
-      if (cat !== "all" && d.category !== cat) return false;
+      if (!matchesCategory(d, cat)) return false;
       if (protein !== "all" && d.protein !== protein) return false;
-      if (time !== "all" && d.timeMin > +time) return false;
+      if (time !== "all" && (d.timeMin || 0) > +time) return false;
       if (batchOnly && (d.batchDays || 1) < 2) return false;
-      if (child && (d.tags || []).some((t) => t === "острое")) return false;
-      if (tags.length && !tags.every((t) => (d.tags || []).includes(t))) return false;
       return true;
     });
+    $("#recipe-count").textContent = `Найдено: ${list.length}`;
     const pane = $("#recipe-list");
     pane.innerHTML = "";
-    list.forEach((d) => {
+    if (!list.length) {
+      pane.innerHTML = `<div class="sk-note">Ничего не найдено — ослабьте фильтр «Раздел» или белок.</div>`;
+      return;
+    }
+    list.slice(0, 120).forEach((d) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = d.id === state.selectedRecipe ? "active" : "";
-      b.innerHTML = `<div style="font-weight:750">${d.name}</div><div class="sk-meta">${d.category} · ${d.timeMin} мин · ${rub(d.costBatch)}</div>`;
+      b.className = `recipe-pick ${d.id === state.selectedRecipe ? "active" : ""}`;
+      b.innerHTML = `<span class="ico">${dishIcon(d)}</span><strong>${d.name}</strong><span class="sk-meta">${d.type} · ${d.protein} · ${d.timeMin} мин · ${rub(d.costBatch)}</span>`;
       b.onclick = () => {
         state.selectedRecipe = d.id;
-        mountRecipeView(d, $("#recipe-view"));
-        redraw();
+        openRecipe(d.id, true);
       };
       pane.appendChild(b);
     });
-    if (!list.length) pane.innerHTML = `<div style="padding:14px" class="sk-meta">Ничего не найдено</div>`;
+    if (list.length > 120) {
+      const more = document.createElement("div");
+      more.className = "sk-meta";
+      more.textContent = `Показаны 120 из ${list.length} — уточните поиск.`;
+      pane.appendChild(more);
+    }
   };
 
-  ["recipe-q", "f-type", "f-cat", "f-protein", "f-time", "f-batch", "f-child"].forEach((id) => {
+  ["recipe-q", "f-type", "f-cat", "f-protein", "f-time", "f-batch"].forEach((id) => {
     $("#" + id).addEventListener("input", redraw);
     $("#" + id).addEventListener("change", redraw);
   });
-  ts.on("change", redraw);
-  if (!state.selectedRecipe) state.selectedRecipe = state.data.dishes[0]?.id;
   redraw();
-  const cur = dish(state.selectedRecipe);
-  if (cur) mountRecipeView(cur, $("#recipe-view"));
 }
 
 function recipeHtml(d, servingsOverride = null) {
@@ -699,93 +735,149 @@ function renderStats() {
   const root = $("#screen-stats");
   const fromDefault = dayjs().subtract(30, "day").format("YYYY-MM-DD");
   const toDefault = dayjs().format("YYYY-MM-DD");
+  const vis = state._statVis || { kpis: true, timeline: true, contours: true, products: true, cooks: true };
   root.innerHTML = `
-    <div class="sk-hero">
-      <h1>Статистика</h1>
-      <p>Траты, готовка и популярные продукты за период — общий облачный журнал семьи.</p>
-    </div>
     <div class="sk-card tone" style="margin-bottom:14px">
       <div class="sk-row">
-        <label class="sk-field">С<input class="sk-input" type="date" id="stat-from" value="${fromDefault}" /></label>
-        <label class="sk-field">По<input class="sk-input" type="date" id="stat-to" value="${toDefault}" /></label>
-        <button class="sk-btn sk-btn-primary" id="stat-run">Показать</button>
+        <label class="sk-field">С<input class="sk-input" type="date" id="stat-from" value="${state._statFrom || fromDefault}" /></label>
+        <label class="sk-field">По<input class="sk-input" type="date" id="stat-to" value="${state._statTo || toDefault}" /></label>
+        <button class="sk-btn sk-btn-primary" id="stat-run">Обновить</button>
       </div>
+      <div class="stats-toggles" id="stat-toggles">
+        ${[
+          ["kpis", "Сводка"],
+          ["timeline", "График дней"],
+          ["contours", "Контуры (готовка/вино/джин/вкусняшки)"],
+          ["products", "Товары"],
+          ["cooks", "Готовки"],
+        ]
+          .map(
+            ([k, lab]) =>
+              `<label><input type="checkbox" data-vis="${k}" ${vis[k] ? "checked" : ""} /> ${lab}</label>`
+          )
+          .join("")}
+      </div>
+      <p class="sk-meta">Контуры = статьи бюджета. Включайте только нужные блоки.</p>
     </div>
-    <div class="sk-stat-row" id="stat-kpis"></div>
+    <div id="stat-kpis" class="sk-stat-row" style="${vis.kpis ? "" : "display:none"}"></div>
     <div class="sk-grid" style="margin-top:12px">
-      <div class="sk-col-6"><div class="sk-card"><h3>Траты по дням</h3><div class="chart-box"><canvas id="chart-timeline"></canvas></div></div></div>
-      <div class="sk-col-6"><div class="sk-card"><h3>По контурам</h3><div class="chart-box"><canvas id="chart-cat"></canvas></div></div></div>
-      <div class="sk-col-12"><div class="sk-card"><h3>Популярные товары</h3><div style="overflow:auto"><table class="sk-table" id="pop-table"><thead><tr><th>#</th><th>Товар</th><th>Раз</th><th>Кол-во</th><th>Сумма</th></tr></thead><tbody></tbody></table></div></div></div>
+      <div class="sk-col-6" id="blk-timeline" style="${vis.timeline ? "" : "display:none"}"><div class="sk-card"><h3>Траты по дням</h3><div class="chart-box"><canvas id="chart-timeline"></canvas></div></div></div>
+      <div class="sk-col-6" id="blk-contours" style="${vis.contours ? "" : "display:none"}"><div class="sk-card"><h3>Контуры расходов</h3><p class="sk-meta">Готовка · Вино · Джин · Вкусняшки · Прочее</p><div class="chart-box"><canvas id="chart-cat"></canvas></div></div></div>
+      <div class="sk-col-12" id="blk-products" style="${vis.products ? "" : "display:none"}"><div class="sk-card"><h3>Популярные товары</h3><div style="overflow:auto"><table class="sk-table" id="pop-table"><thead><tr><th>#</th><th>Товар</th><th>Раз</th><th>Кол-во</th><th>Сумма</th></tr></thead><tbody></tbody></table></div></div></div>
+      <div class="sk-col-12" id="blk-cooks" style="${vis.cooks ? "" : "display:none"}"><div class="sk-card"><h3>Последние готовки</h3><div id="cook-list"></div></div></div>
     </div>`;
+
+  $$("#stat-toggles [data-vis]").forEach((inp) => {
+    inp.onchange = () => {
+      state._statVis = state._statVis || { ...vis };
+      state._statVis[inp.dataset.vis] = inp.checked;
+      renderStats();
+    };
+  });
 
   const draw = () => {
     destroyCharts();
-    const from = $("#stat-from").value;
-    const to = $("#stat-to").value;
-    const ev = filterEvents(state.events, from, to);
+    state._statFrom = $("#stat-from").value;
+    state._statTo = $("#stat-to").value;
+    const ev = filterEvents(state.events, state._statFrom, state._statTo);
     const pop = popularProducts(ev, state.cat.products, 20);
     const cats = spendByCategory(ev);
-    const timeline = spendTimeline(ev, from, to);
+    const timeline = spendTimeline(ev, state._statFrom, state._statTo);
     const sum = totalSpend(ev);
-    $("#stat-kpis").innerHTML = `
-      <div class="sk-stat"><span class="sk-meta">Траты</span><b>${rub(sum)}</b></div>
-      <div class="sk-stat"><span class="sk-meta">Событий</span><b>${ev.length}</b></div>
-      <div class="sk-stat"><span class="sk-meta">Готовка</span><b>${rub(cats.cooking)}</b></div>`;
-
-    state.charts.timeline = new Chart($("#chart-timeline"), {
-      type: "line",
-      data: {
-        labels: timeline.map((d) => d.label),
-        datasets: [{ label: "₽", data: timeline.map((d) => d.total), borderColor: "#1f3a56", backgroundColor: "rgba(31,58,86,.12)", tension: 0.3, fill: true }],
-      },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } },
-    });
-    state.charts.cat = new Chart($("#chart-cat"), {
-      type: "doughnut",
-      data: {
-        labels: ["Готовка", "Вино", "Джин", "Вкусняшки", "Прочее"],
-        datasets: [{ data: [cats.cooking, cats.wine, cats.gin, cats.treats, cats.other], backgroundColor: ["#1f3a56", "#c8892a", "#5c6673", "#2f6b4f", "#c5ced8"] }],
-      },
-      options: { responsive: true, maintainAspectRatio: false },
-    });
-    const tb = $("#pop-table tbody");
-    tb.innerHTML = pop
-      .map((p, i) => `<tr><td>${i + 1}</td><td>${p.name}</td><td>${p.count}</td><td>${Math.round(p.qty)}</td><td>${rub(p.cost)}</td></tr>`)
-      .join("") || `<tr><td colspan="5" class="sk-meta">Пока нет данных за период.</td></tr>`;
+    const cooks = ev.filter((e) => e.type === "cook").slice(-15).reverse();
+    if ($("#stat-kpis")) {
+      $("#stat-kpis").innerHTML = `
+        <div class="sk-stat"><span class="sk-meta">Всего ₽</span><b>${rub(sum)}</b></div>
+        <div class="sk-stat"><span class="sk-meta">Покупок</span><b>${ev.filter((e) => e.type === "spend").length}</b></div>
+        <div class="sk-stat"><span class="sk-meta">Готовок</span><b>${cooks.length}</b></div>`;
+    }
+    if (vis.timeline && $("#chart-timeline")) {
+      state.charts.timeline = new Chart($("#chart-timeline"), {
+        type: "line",
+        data: {
+          labels: timeline.map((d) => d.label),
+          datasets: [{ label: "₽", data: timeline.map((d) => d.total), borderColor: "#1f3a56", backgroundColor: "rgba(31,58,86,.12)", tension: 0.3, fill: true }],
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } },
+      });
+    }
+    if (vis.contours && $("#chart-cat")) {
+      state.charts.cat = new Chart($("#chart-cat"), {
+        type: "doughnut",
+        data: {
+          labels: ["Готовка", "Вино", "Джин", "Вкусняшки", "Прочее"],
+          datasets: [{ data: [cats.cooking, cats.wine, cats.gin, cats.treats, cats.other], backgroundColor: ["#1f3a56", "#c8892a", "#5c6673", "#2f6b4f", "#c5ced8"] }],
+        },
+        options: { responsive: true, maintainAspectRatio: false },
+      });
+    }
+    if ($("#pop-table tbody")) {
+      $("#pop-table tbody").innerHTML =
+        pop.map((p, i) => `<tr><td>${i + 1}</td><td>${p.name}</td><td>${p.count}</td><td>${Math.round(p.qty)}</td><td>${rub(p.cost)}</td></tr>`).join("") ||
+        `<tr><td colspan="5" class="sk-meta">Нет данных</td></tr>`;
+    }
+    if ($("#cook-list")) {
+      $("#cook-list").innerHTML = cooks.length
+        ? cooks.map((c) => `<div class="shop-item"><div style="flex:1"><b>${c.recipeName || c.recipeId}</b><div class="sk-meta">${dayjs(c.at).format("D MMM HH:mm")}</div></div></div>`).join("")
+        : `<div class="sk-meta">Пока нет отметок «Приготовил»</div>`;
+    }
   };
   $("#stat-run").onclick = draw;
   draw();
 }
 
 /* ——— BUDGET ——— */
+function purchasesFact() {
+  const cats = spendByCategory(state.events || []);
+  return {
+    cooking: cats.cooking || 0,
+    wine: cats.wine || 0,
+    gin: cats.gin || 0,
+    treats: cats.treats || 0,
+  };
+}
+
 function renderBudget() {
   const root = $("#screen-budget");
   const s = state.settings;
   const b = state.budget;
+  const fromPurchases = purchasesFact();
   const totalPlan = s.cookingBudget + s.wineBudget + s.ginBudget + s.treatsBudget;
   const totalFact = (b.cookingSpent || 0) + (b.wineSpent || 0) + (b.ginSpent || 0) + (b.treatsSpent || 0);
   root.innerHTML = `
-    <div class="sk-hero"><h1>Бюджет</h1><p>План и факт по контурам — общий на семью.</p></div>
     <div class="sk-stat-row">
       <div class="sk-stat"><span class="sk-meta">План месяца</span><b>${rub(totalPlan)}</b></div>
-      <div class="sk-stat"><span class="sk-meta">Факт</span><b>${rub(totalFact)}</b></div>
-      <div class="sk-stat"><span class="sk-meta">Остаток</span><b>${rub(totalPlan - totalFact)}</b></div>
+      <div class="sk-stat"><span class="sk-meta">Факт (ledger)</span><b>${rub(totalFact)}</b></div>
+      <div class="sk-stat"><span class="sk-meta">Из покупок (события)</span><b>${rub(fromPurchases.cooking + fromPurchases.wine + fromPurchases.gin + fromPurchases.treats)}</b></div>
+    </div>
+    <div class="sk-card" style="margin-bottom:12px">
+      <p class="sk-meta">Факт можно подтянуть из отмеченных покупок (цена при галочке в «Покупки») и потом поправить вручную.</p>
+      <button class="sk-btn sk-btn-accent" id="pull-purchases">Подтянуть факт из покупок</button>
     </div>
     <div class="sk-card">
       <table class="sk-table">
-        <thead><tr><th>Статья</th><th>План</th><th>Факт</th><th>+ факт</th></tr></thead>
+        <thead><tr><th>Статья</th><th>План</th><th>Факт</th><th>Из покупок</th><th>+ корректировка</th></tr></thead>
         <tbody>
-          <tr><td>Готовка</td><td>${rub(s.cookingBudget)}</td><td>${rub(b.cookingSpent)}</td><td><input class="sk-input" type="number" id="add-cooking" /></td></tr>
-          <tr><td>Вино</td><td>${rub(s.wineBudget)}</td><td>${rub(b.wineSpent)}</td><td><input class="sk-input" type="number" id="add-wine" /></td></tr>
-          <tr><td>Джин</td><td>${rub(s.ginBudget)}</td><td>${rub(b.ginSpent)}</td><td><input class="sk-input" type="number" id="add-gin" /></td></tr>
-          <tr><td>Вкусняшки</td><td>${rub(s.treatsBudget)}</td><td>${rub(b.treatsSpent)}</td><td><input class="sk-input" type="number" id="add-treats" /></td></tr>
+          <tr><td>Готовка</td><td>${rub(s.cookingBudget)}</td><td>${rub(b.cookingSpent)}</td><td>${rub(fromPurchases.cooking)}</td><td><input class="sk-input" type="number" id="add-cooking" /></td></tr>
+          <tr><td>Вино</td><td>${rub(s.wineBudget)}</td><td>${rub(b.wineSpent)}</td><td>${rub(fromPurchases.wine)}</td><td><input class="sk-input" type="number" id="add-wine" /></td></tr>
+          <tr><td>Джин</td><td>${rub(s.ginBudget)}</td><td>${rub(b.ginSpent)}</td><td>${rub(fromPurchases.gin)}</td><td><input class="sk-input" type="number" id="add-gin" /></td></tr>
+          <tr><td>Вкусняшки</td><td>${rub(s.treatsBudget)}</td><td>${rub(b.treatsSpent)}</td><td>${rub(fromPurchases.treats)}</td><td><input class="sk-input" type="number" id="add-treats" /></td></tr>
         </tbody>
       </table>
       <div class="sk-row" style="margin-top:12px">
-        <button class="sk-btn sk-btn-primary" id="save-budget">Сохранить</button>
+        <button class="sk-btn sk-btn-primary" id="save-budget">Сохранить корректировку</button>
         <button class="sk-btn sk-btn-ghost" id="reset-budget">Сбросить факт</button>
       </div>
     </div>`;
+  $("#pull-purchases").onclick = async () => {
+    state.budget.cookingSpent = fromPurchases.cooking;
+    state.budget.wineSpent = fromPurchases.wine;
+    state.budget.ginSpent = fromPurchases.gin;
+    state.budget.treatsSpent = fromPurchases.treats;
+    await persistLocal();
+    toast("Факт = сумма покупок из журнала");
+    renderBudget();
+  };
   $("#save-budget").onclick = async () => {
     const add = async (sel, key, category) => {
       const v = parseFloat($(sel).value) || 0;
@@ -798,7 +890,7 @@ function renderBudget() {
     await add("#add-gin", "ginSpent", "gin");
     await add("#add-treats", "treatsSpent", "treats");
     await persistLocal();
-    toast("Бюджет обновлён");
+    toast("Корректировка сохранена");
     renderBudget();
   };
   $("#reset-budget").onclick = async () => {
@@ -885,31 +977,17 @@ async function boot() {
   $("#recipeModal")?.addEventListener("click", (e) => {
     if (e.target.id === "recipeModal") closeRecipeModal();
   });
-  $("#product-modal-close")?.addEventListener("click", () => ensureStockUi().closeProductModal());
-  $("#productModal")?.addEventListener("click", (e) => {
-    if (e.target.id === "productModal") ensureStockUi().closeProductModal();
-  });
 
-  $$("[data-profile]").forEach((b) => {
-    b.onclick = async () => {
-      state.settings.profile = b.dataset.profile;
-      await persistLocal();
-      applyProfile();
-      setScreen(state.settings.profile === "kitchen" ? "today" : state.screen);
-      toast(state.settings.profile === "kitchen" ? "Режим «Кухня»" : "Командный центр");
-    };
-  });
   $$("#nav-list [data-screen]").forEach((b) => {
     b.onclick = () => setScreen(b.dataset.screen);
   });
 
-  applyProfile();
+  state.settings.profile = "command";
   updateSyncBadge();
-  setScreen(state.settings.profile === "kitchen" ? "today" : "plan");
+  setScreen("plan");
 
   syncPull(true)
     .then(() => {
-      applyProfile();
       renderScreen();
     })
     .catch(() => {});
