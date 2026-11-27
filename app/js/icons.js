@@ -1,82 +1,82 @@
 /**
- * Иконки: Phosphor Duotone через Iconify.
- * Двухтон под бренд (ink + saffron), без системных emoji.
+ * Иконки: Lucide (outline) через Iconify.
+ * Реальные food-glyphs вместо абстрактных duotone-фигур.
  */
 const I = (name) =>
-  `<iconify-icon class="sk-ico" icon="ph:${name}-duotone" width="1.2em" height="1.2em" aria-hidden="true"></iconify-icon>`;
+  `<iconify-icon class="sk-ico" icon="lucide:${name}" width="1.15em" height="1.15em" stroke-width="1.75" aria-hidden="true"></iconify-icon>`;
 
 const BY_ID = {
-  potato: "circles-three",
-  cabbage: "leaf",
+  potato: "cuboid",
+  cabbage: "leafy-green",
   carrot: "carrot",
-  onion: "circles-three-plus",
-  beet: "circle-half",
-  tomato: "seal",
-  cucumber: "plant",
-  pepper: "pepper",
-  zucchini: "plant",
-  pumpkin: "orange",
-  broccoli: "tree",
-  apple: "apple-logo",
-  banana: "orange",
-  pear: "orange",
-  orange: "orange",
-  lemon: "orange",
-  berries: "circles-four",
-  buckwheat: "grains",
-  rice: "bowl-steam",
-  oats: "bowl-food",
-  pasta: "spiral",
-  bread: "bread",
-  flour: "cooking-pot",
-  milk: "pint-glass",
-  kefir: "pint-glass",
-  sourcream: "drop-half",
-  tvorog: "cheese",
-  yogurt: "pint-glass",
-  cheese: "cheese",
+  onion: "sprout",
+  beet: "cherry",
+  tomato: "cherry",
+  cucumber: "salad",
+  pepper: "flame",
+  zucchini: "leafy-green",
+  pumpkin: "citrus",
+  broccoli: "broccoli",
+  apple: "apple",
+  banana: "banana",
+  pear: "apple",
+  orange: "citrus",
+  lemon: "citrus",
+  berries: "grape",
+  buckwheat: "wheat",
+  rice: "soup",
+  oats: "wheat",
+  pasta: "utensils",
+  bread: "sandwich",
+  flour: "wheat",
+  milk: "milk",
+  kefir: "milk",
+  sourcream: "droplet",
+  tvorog: "milk",
+  yogurt: "milk",
+  cheese: "pizza",
   egg: "egg",
-  butter: "drop",
-  oil: "drop-half-bottom",
-  chicken_cheap: "bird",
-  chicken_fillet: "bird",
-  chicken_thigh: "bird",
+  butter: "droplet",
+  oil: "droplets",
+  chicken_cheap: "drumstick",
+  chicken_fillet: "drumstick",
+  chicken_thigh: "drumstick",
   chicken_liver: "heart",
-  turkey_fillet: "bird",
-  mince_cheap: "hamburger",
-  mince_beef: "hamburger",
-  mince_chicken: "hamburger",
-  pork_shoulder: "knife",
-  beef_stew: "cooking-pot",
+  turkey_fillet: "drumstick",
+  mince_cheap: "beef",
+  mince_beef: "beef",
+  mince_chicken: "drumstick",
+  pork_shoulder: "ham",
+  beef_stew: "beef",
   pollock: "fish",
   sole: "fish",
   tilapia: "fish",
-  salmon_pink: "fish-simple",
-  herring_fillet: "fish-simple",
-  mushroom: "hexagon",
+  salmon_pink: "fish-symbol",
+  herring_fillet: "fish",
+  mushroom: "shell",
 };
 
 const BY_CAT = {
   овощи: "carrot",
-  фрукты: "apple-logo",
-  крупы: "grains",
-  бобовые: "circles-three",
-  молочка: "pint-glass",
+  фрукты: "apple",
+  крупы: "wheat",
+  бобовые: "bean",
+  молочка: "milk",
   яйца: "egg",
-  птица: "bird",
-  мясо: "knife",
-  фарш: "hamburger",
+  птица: "drumstick",
+  мясо: "beef",
+  фарш: "beef",
   рыба: "fish",
   субпродукты: "heart",
-  выпечка: "bread",
-  зелень: "leaf",
-  специи: "flower-lotus",
-  соусы: "drop-half",
+  выпечка: "croissant",
+  зелень: "leafy-green",
+  специи: "flame",
+  соусы: "droplet",
   сладкое: "cookie",
-  масло: "drop",
-  бакалея: "basket",
-  сухофрукты: "orange",
-  вкусняшки: "cookie",
+  масло: "droplet",
+  бакалея: "shopping-basket",
+  сухофрукты: "grape",
+  вкусняшки: "candy",
   алкоголь: "wine",
   прочее: "package",
   своё: "tag",
@@ -88,14 +88,14 @@ export function productIcon(product) {
 }
 
 export function dishIcon(dish) {
-  if (!dish) return I("fork-knife");
-  if (dish.type === "breakfast") return I("sun-horizon");
-  if (dish.type === "soup") return I("bowl-steam");
-  if (dish.type === "dessert") return I("cake");
+  if (!dish) return I("utensils-crossed");
+  if (dish.type === "breakfast") return I("egg-fried");
+  if (dish.type === "soup") return I("soup");
+  if (dish.type === "dessert") return I("cake-slice");
   if (dish.type === "snack") return I("cookie");
   if (dish.protein === "рыба") return I("fish");
-  if (dish.protein === "птица") return I("bird");
-  if (dish.protein === "мясо" || dish.protein === "фарш") return I("knife");
-  if (dish.protein === "без мяса") return I("leaf");
-  return I("fork-knife");
+  if (dish.protein === "птица") return I("drumstick");
+  if (dish.protein === "мясо" || dish.protein === "фарш") return I("beef");
+  if (dish.protein === "без мяса") return I("salad");
+  return I("utensils-crossed");
 }

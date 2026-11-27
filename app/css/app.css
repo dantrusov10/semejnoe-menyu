@@ -315,14 +315,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .recipe-pick .ico { font-size: 1.35rem; display: inline-flex; align-items: center; }
 .sk-ico {
   display: inline-block;
-  vertical-align: -0.22em;
+  vertical-align: -0.2em;
   color: var(--accent);
-  --secondary: color-mix(in srgb, var(--accent-2) 82%, #fff 8%);
+  flex-shrink: 0;
 }
 .prod-ico .sk-ico,
 .recipe-pick .sk-ico {
-  width: 1.15em;
-  height: 1.15em;
+  width: 1.2em;
+  height: 1.2em;
+  color: var(--ink);
+  opacity: 0.88;
 }
 .recipe-count { font-weight: 750; color: var(--muted); margin: 8px 0 12px; }
 
