@@ -20,6 +20,10 @@ import {
   basketToText,
   scaleIngredients,
   placeRecipeInPlan,
+  daysRu,
+  banForMonth,
+  isBanned,
+  familyServings,
 } from "./engine.js";
 import {
   pullCloud,
@@ -224,7 +228,7 @@ function renderToday() {
     const meta = day.meta?.[mealKey];
     const col = document.createElement("div");
     col.className = "sk-col-4";
-    col.innerHTML = `<div class="sk-meal"><b>${label}</b><div><div style="font-weight:750">${d.name}</div><div class="sk-meta">${d.timeMin} мин · ${d.category}${meta ? ` · ${meta.people || "?"} чел · ${meta.batchDays || 1} дн` : ` · batch ${d.batchDays} дн`}</div></div><div class="price">~${rub(d.costPerServing)}</div></div>`;
+    col.innerHTML = `<div class="sk-meal"><b>${label}</b><div><div style="font-weight:750">${d.name}</div><div class="sk-meta">${d.timeMin} мин · ${d.category}${meta ? ` · ${meta.people || "?"} чел · ${daysRu(meta.batchDays || 1)}` : ` · ${daysRu(d.batchDays)}`}</div></div><div class="price">~${rub(d.costPerServing)}</div></div>`;
     col.querySelector(".sk-meal").onclick = () => openRecipe(id);
     box.appendChild(col);
   });
@@ -239,7 +243,11 @@ async function swapMeal(dayIndex, mealKey) {
   const current = dish(day[mealKey]);
   if (!current) return;
   const alts = state.data.dishes.filter(
-    (d) => d.type === current.type && d.id !== current.id && !state.settings.disliked.includes(d.id)
+    (d) =>
+      d.type === current.type &&
+      d.id !== current.id &&
+      !state.settings.disliked.includes(d.id) &&
+      !isBanned(d.id, state.settings)
   );
   if (!alts.length) return toast("Нет замен");
   const pick = alts[Math.floor(Math.random() * Math.min(5, alts.length))];
@@ -253,10 +261,23 @@ async function swapMeal(dayIndex, mealKey) {
 function renderPlan() {
   const root = $("#screen-plan");
   const cost = estimatePlanCost(state.plan, state.cat.dishes);
+  const monthCap = Math.round((state.settings.cookingBudget || 32000) / 4);
+  const over = cost > monthCap;
   root.innerHTML = `
     <div class="sk-hero">
       <h1>План недели</h1>
-      <p>Авточерновик или ручная сборка из рецептов: порции, люди, на сколько дней.</p>
+      <p>Авточерновик или ручная сборка: люди, порции, на сколько дней готовите сразу.</p>
+    </div>
+    <div class="sk-forecast ${over ? "warn" : ""}">
+      <div>
+        <div class="sk-meta">Прогноз готовки на неделю</div>
+        <div class="sk-kpi">${rub(cost)}</div>
+      </div>
+      <div>
+        <div class="sk-meta">Ориентир ~¼ месячного лимита</div>
+        <div class="sk-kpi" style="font-size:1.2rem">${rub(monthCap)}</div>
+      </div>
+      <p class="sk-meta" style="grid-column:1/-1;margin:0">${over ? "Выше ориентира — упростите ужин или замените рыбу/мясо." : "В пределах ориентира. Корзина считает только отмеченные слоты."}</p>
     </div>
     <div class="sk-row">
       <label class="sk-field">Неделя шаблона
@@ -267,7 +288,6 @@ function renderPlan() {
       <button class="sk-btn sk-btn-primary" id="gen-week">Авточерновик</button>
       <button class="sk-btn sk-btn-ghost" id="to-basket-week">В корзину</button>
       <button class="sk-btn sk-btn-accent" id="to-recipes">Добавить блюдо</button>
-      <div class="sk-card" style="padding:10px 14px"><span class="sk-meta">Ориентир недели</span><div class="sk-kpi" style="font-size:1.25rem">${rub(cost)}</div></div>
     </div>
     <div class="sk-grid" id="plan-grid"></div>`;
   $("#week-select").onchange = (e) => (state.weekNum = +e.target.value);
@@ -294,12 +314,14 @@ function renderPlan() {
       const row = document.createElement("div");
       row.className = "sk-meal";
       row.style.marginTop = "8px";
-      row.innerHTML = `<b>${labels[key]}</b><div><div style="font-weight:750">${d.name}</div><div class="sk-meta">${meta ? `${meta.people || "?"} чел · ${meta.batchDays || 1} дн · ${meta.servings || "?"} порц` : `${d.batchDays} дн`}</div></div><div class="price">${meta?.batchDays ? "batch" : d.batchDays + "д"}</div>`;
+      const span = meta?.batchDays || d.batchDays || 1;
+      row.innerHTML = `<b>${labels[key]}</b><div><div style="font-weight:750">${d.name}</div><div class="sk-meta">${meta ? `${meta.people || "?"} чел · ${daysRu(span)} · ${meta.servings || "?"} порц` : daysRu(span)}</div></div><div class="price">${span > 1 ? daysRu(span) : "~1 д"}</div>`;
       row.onclick = () => openRecipe(d.id);
       mealsBox.appendChild(row);
     });
     col.querySelector("[data-swap]").onclick = async (e) => {
       e.stopPropagation();
+      state.settings.bannedUntil = banForMonth(state.settings, day.dinner, 30);
       if (!state.settings.disliked.includes(day.dinner)) state.settings.disliked.push(day.dinner);
       await swapMeal(idx, "dinner");
       await persistLocal();
@@ -327,46 +349,72 @@ const QUICK = [
   ["sourcream", 300],
 ];
 
+const ZONE_LABEL = { fridge: "Холодильник", freezer: "Морозилка", pantry: "Кладовка" };
+
+function guessZone(p) {
+  const z = state.settings.invZones?.[p.id];
+  if (z) return z;
+  if (p.store === "parnoe" || /mince|chicken|pork|beef|pollock|sole|tilapia|salmon|liver/.test(p.id)) return "freezer";
+  if (/milk|kefir|sourcream|tvorog|butter|cheese|egg|dill/.test(p.id)) return "fridge";
+  return "pantry";
+}
+
 function renderInventory() {
   const root = $("#screen-inventory");
+  const stocked = state.data.products.filter((p) => (state.inventory[p.id] || 0) > 0);
+  const filter = state._invFilter || "all";
+  const q = (state._invQ || "").trim().toLowerCase();
+
   root.innerHTML = `
-    <div class="card border-0 shadow-sm mb-3">
-      <div class="card-body">
-        <h1 class="h3">Запасы <span class="fs-6 text-secondary fw-normal">(общие для семьи)</span></h1>
-        <p class="sk-meta">Изменения сами уходят в облако — на другом телефоне подтянутся.</p>
-        <div class="d-flex flex-wrap gap-2 mb-3" id="quick"></div>
-        <div class="row g-2 align-items-end">
-          <div class="col-6 col-md-3">
-            <label class="form-label">Режим подбора</label>
-            <select class="form-select" id="match-mode">
-              <option value="strict">Только если всё есть</option>
-              <option value="almost" selected>Почти хватает (~250 ₽)</option>
-            </select>
-          </div>
-          <div class="col-6 col-md-2">
-            <label class="form-label">Мин. порций</label>
-            <input type="number" class="form-control" id="min-serv" value="2" min="1" />
-          </div>
-          <div class="col-12 col-md-auto d-grid d-md-flex gap-2">
-            <button class="btn btn-success" id="run-match"><i class="bi bi-search me-1"></i>Показать блюда</button>
-            <button class="btn btn-outline-secondary" id="pull-inv">Обновить из облака</button>
-            <button class="btn btn-outline-danger" id="clear-inv">Сбросить</button>
-          </div>
-        </div>
+    <div class="sk-hero">
+      <h1>Запасы</h1>
+      <p>Общие для семьи. Плюс — быстро дописать; зона (холодильник / морозилка / кладовка) — чтобы видеть, куда класть покупку из Парного мяса.</p>
+    </div>
+    <div class="sk-stat-row">
+      <div class="sk-stat"><span class="sk-meta">Позиций дома</span><b>${stocked.length}</b></div>
+      <div class="sk-stat"><span class="sk-meta">Морозилка</span><b>${stocked.filter((p) => guessZone(p) === "freezer").length}</b></div>
+      <div class="sk-stat"><span class="sk-meta">Холодильник</span><b>${stocked.filter((p) => guessZone(p) === "fridge").length}</b></div>
+    </div>
+    <div class="sk-card tone" style="margin-bottom:14px">
+      <div class="sk-meta" style="margin-bottom:8px">Быстро добавить</div>
+      <div class="sk-chip-row" id="quick"></div>
+      <div class="sk-row">
+        <label class="sk-field" style="flex:1;min-width:180px">Поиск
+          <input class="sk-input" id="inv-q" placeholder="курица, гречка…" value="${state._invQ || ""}" />
+        </label>
+        <label class="sk-field">Зона
+          <select class="sk-select" id="inv-zone-f">
+            <option value="all" ${filter === "all" ? "selected" : ""}>Все</option>
+            <option value="fridge" ${filter === "fridge" ? "selected" : ""}>Холодильник</option>
+            <option value="freezer" ${filter === "freezer" ? "selected" : ""}>Морозилка</option>
+            <option value="pantry" ${filter === "pantry" ? "selected" : ""}>Кладовка</option>
+            <option value="have" ${filter === "have" ? "selected" : ""}>Только что есть</option>
+          </select>
+        </label>
+        <label class="sk-field">Подбор блюд
+          <select class="sk-select" id="match-mode">
+            <option value="almost">Почти хватает</option>
+            <option value="strict">Всё есть</option>
+          </select>
+        </label>
+        <button class="sk-btn sk-btn-primary" id="run-match">Что можно приготовить</button>
+        <button class="sk-btn sk-btn-ghost" id="clear-inv">Сбросить</button>
       </div>
     </div>
-    <div class="row g-2 mb-3" id="inv-grid"></div>
-    <div class="row g-3" id="match-results"></div>`;
+    <div class="inv-grid" id="inv-grid"></div>
+    <div class="sk-grid" id="match-results" style="margin-top:16px"></div>`;
 
   QUICK.forEach(([id, amt]) => {
     const p = state.cat.products[id];
     if (!p) return;
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "btn btn-outline-success btn-sm inv-chip";
-    b.innerHTML = `<i class="bi bi-plus"></i> ${p.name}`;
+    b.className = "sk-chip";
+    b.textContent = `+ ${p.name}`;
     b.onclick = async () => {
       state.inventory[id] = (state.inventory[id] || 0) + amt;
+      if (!state.settings.invZones) state.settings.invZones = {};
+      if (!state.settings.invZones[id]) state.settings.invZones[id] = guessZone(p);
       await saveInventoryAndSync();
       renderInventory();
       toast(`+ ${p.name}`);
@@ -374,122 +422,240 @@ function renderInventory() {
     $("#quick").appendChild(b);
   });
 
-  const list =
-    state.settings.profile === "kitchen"
-      ? state.data.products.filter((p) => (state.inventory[p.id] || 0) > 0 || QUICK.some(([id]) => id === p.id))
-      : state.data.products;
+  let list = state.data.products.slice();
+  if (state.settings.profile === "kitchen" && filter !== "all") {
+    list = list.filter((p) => (state.inventory[p.id] || 0) > 0 || QUICK.some(([id]) => id === p.id));
+  }
+  if (filter === "have") list = list.filter((p) => (state.inventory[p.id] || 0) > 0);
+  else if (filter !== "all") list = list.filter((p) => guessZone(p) === filter);
+  if (q) list = list.filter((p) => p.name.toLowerCase().includes(q) || p.id.includes(q));
 
+  const grid = $("#inv-grid");
   list.forEach((p) => {
-    const col = document.createElement("div");
-    col.className = "col-12 col-sm-6 col-lg-4 col-xxl-3";
-    col.innerHTML = `
-      <div class="input-group">
-        <span class="input-group-text small" style="min-width:58%">${p.name}</span>
-        <input type="number" class="form-control" min="0" placeholder="0" data-pid="${p.id}" value="${state.inventory[p.id] || ""}" />
+    const have = state.inventory[p.id] || 0;
+    const zone = guessZone(p);
+    const card = document.createElement("div");
+    card.className = `inv-card ${have ? "has" : ""}`;
+    card.innerHTML = `
+      <div class="inv-card-top">
+        <strong>${p.name}</strong>
+        <select class="sk-zone" data-zone="${p.id}" aria-label="Зона">
+          ${Object.entries(ZONE_LABEL)
+            .map(([k, lab]) => `<option value="${k}" ${zone === k ? "selected" : ""}>${lab}</option>`)
+            .join("")}
+        </select>
       </div>
-      <div class="form-text">${storeName(state.data.stores, p.store)} · ${p.unit}</div>`;
-    $("#inv-grid").appendChild(col);
+      <div class="inv-card-amt">
+        <button type="button" data-minus="1" aria-label="меньше">−</button>
+        <input type="number" min="0" step="any" data-pid="${p.id}" value="${have || ""}" placeholder="0" />
+        <button type="button" data-plus="1" aria-label="больше">+</button>
+        <span class="sk-meta">${p.unit === "pcs" ? "шт" : p.unit === "ml" ? "мл" : "г"}</span>
+      </div>
+      <div class="sk-meta">${storeName(state.data.stores, p.store)}</div>`;
+    const inp = card.querySelector("input");
+    const step = p.unit === "pcs" ? 1 : p.unit === "ml" ? 100 : 100;
+    card.querySelector("[data-minus]").onclick = async () => {
+      const v = Math.max(0, (parseFloat(inp.value) || 0) - step);
+      inp.value = v || "";
+      await commitInvInput(inp);
+    };
+    card.querySelector("[data-plus]").onclick = async () => {
+      inp.value = String((parseFloat(inp.value) || 0) + step);
+      await commitInvInput(inp);
+    };
+    inp.onchange = () => commitInvInput(inp);
+    card.querySelector("[data-zone]").onchange = async (e) => {
+      if (!state.settings.invZones) state.settings.invZones = {};
+      state.settings.invZones[p.id] = e.target.value;
+      await persistLocal();
+    };
+    grid.appendChild(card);
   });
 
-  const syncInputs = () => {
-    $$("#inv-grid input").forEach((inp) => {
-      const v = parseFloat(inp.value);
-      if (!v) delete state.inventory[inp.dataset.pid];
-      else state.inventory[inp.dataset.pid] = v;
-    });
+  $("#inv-q").oninput = (e) => {
+    state._invQ = e.target.value;
+    clearTimeout(state._invQTimer);
+    state._invQTimer = setTimeout(() => renderInventory(), 180);
   };
-
-  $("#inv-grid").onchange = async () => {
-    syncInputs();
-    await saveInventoryAndSync();
+  $("#inv-zone-f").onchange = (e) => {
+    state._invFilter = e.target.value;
+    renderInventory();
   };
   $("#match-mode").value = state.matchMode;
   $("#match-mode").onchange = (e) => (state.matchMode = e.target.value);
-  $("#run-match").onclick = () => {
-    syncInputs();
-    runMatch();
-  };
-  $("#pull-inv").onclick = async () => {
-    try {
-      await syncPull(true);
-      toast("Запасы обновлены из облака");
-      renderInventory();
-    } catch (e) {
-      toast(e.message);
-    }
-  };
+  $("#run-match").onclick = () => runMatch();
   $("#clear-inv").onclick = async () => {
+    if (!confirm("Обнулить все запасы?")) return;
     state.inventory = {};
     await saveInventoryAndSync();
     renderInventory();
   };
 }
 
+async function commitInvInput(inp) {
+  const v = parseFloat(inp.value);
+  if (!v) delete state.inventory[inp.dataset.pid];
+  else state.inventory[inp.dataset.pid] = v;
+  await saveInventoryAndSync();
+}
+
 function runMatch() {
-  const minServ = +$("#min-serv").value || 1;
   const results = matchFromInventory(state.data.dishes, state.cat.products, state.inventory, state.settings, {
-    minServings: minServ,
+    minServings: 2,
     mode: state.matchMode,
-  }).slice(0, 24);
+  }).slice(0, 18);
   const box = $("#match-results");
-  box.innerHTML = results.length ? "" : `<div class="col-12"><div class="alert alert-secondary">Ничего не подобрали — добавьте запасы.</div></div>`;
+  if (!box) return;
+  box.innerHTML = results.length
+    ? ""
+    : `<div class="sk-col-12"><div class="sk-note">Ничего не подобрали — добавьте запасы или ослабьте режим подбора.</div></div>`;
   results.forEach((r) => {
     const col = document.createElement("div");
-    col.className = "col-12 col-md-6 col-xl-4";
+    col.className = "sk-col-4";
     col.innerHTML = `
-      <div class="card h-100 shadow-sm border-0 meal-tile">
-        <div class="card-body">
-          <h2 class="h5">${r.dish.name}</h2>
-          <p class="small text-secondary mb-2">${r.why} · покрытие ${Math.round(r.coverage * 100)}% · ~${r.portions || "?"} порц</p>
-          <div class="d-flex flex-wrap gap-1 mb-2">
-            <span class="badge text-bg-success">${r.dish.category}</span>
-            <span class="badge text-bg-light text-dark border">${r.dish.timeMin} мин</span>
-            <span class="badge text-bg-light text-dark border">${rub(r.dish.costBatch)}</span>
-          </div>
-          ${r.missing.length ? `<div class="small text-warning-emphasis">Докупить: ${r.missing.map((m) => m.name).slice(0, 4).join(", ")}</div>` : `<div class="alert alert-success py-2 mb-0">Можно готовить</div>`}
-        </div>
-      </div>`;
-    col.querySelector(".card").onclick = () => openRecipe(r.dish.id);
+      <button type="button" class="sk-match">
+        <strong>${r.dish.name}</strong>
+        <span class="sk-meta">${r.why} · ${Math.round(r.coverage * 100)}% · ~${r.portions || "?"} порц · ${daysRu(r.dish.batchDays)}</span>
+        ${
+          r.missing.length
+            ? `<span class="sk-tag hot">док. ${r.missing
+                .map((m) => m.name)
+                .slice(0, 3)
+                .join(", ")}</span>`
+            : `<span class="sk-tag ok">можно готовить</span>`
+        }
+      </button>`;
+    col.querySelector("button").onclick = () => openRecipe(r.dish.id);
     box.appendChild(col);
   });
 }
 
-/* ——— BASKET ——— */
+/* ——— BASKET + shopping list + treats ——— */
+function ensureBasketPick() {
+  if (!state.settings.basketPick) {
+    state.settings.basketPick = {
+      days: [0, 1, 2, 3, 4, 5, 6],
+      meals: { breakfast: true, lunch: true, dinner: true },
+    };
+  }
+  if (!Array.isArray(state.settings.shoppingList)) state.settings.shoppingList = [];
+  if (!Array.isArray(state.settings.treats)) state.settings.treats = [];
+  return state.settings.basketPick;
+}
+
+function uid() {
+  return `i_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
 function renderBasket() {
   const root = $("#screen-basket");
-  const slots = slotsFromPlan(state.plan, state.cat.dishes);
+  const pick = ensureBasketPick();
+  const tab = state._basketTab || "plan";
+  const slots = slotsFromPlan(state.plan, state.cat.dishes, pick);
   const basket = buildBasket(slots, state.cat.dishes, state.cat.products, state.inventory);
-  root.innerHTML = `
-    <div class="card border-0 shadow-sm mb-3"><div class="card-body">
-      <h1 class="h3">Корзина на неделю</h1>
-      <p class="text-secondary">План × порции − общие запасы. Списки по магазинам.</p>
-      <div class="row g-2 mb-3">
-        <div class="col-4"><div class="p-3 bg-success-subtle rounded-3"><div class="small">Докупить</div><div class="fs-4 fw-bold">${rub(basket.total)}</div></div></div>
-        <div class="col-4"><div class="p-3 bg-body-secondary rounded-3"><div class="small">Позиций</div><div class="fs-4 fw-bold">${Object.values(basket.byStore).reduce((s, g) => s + g.lines.length, 0)}</div></div></div>
-        <div class="col-4"><div class="p-3 bg-body-secondary rounded-3"><div class="small">Уже есть</div><div class="fs-4 fw-bold">${basket.lines.filter((l) => l.covered).length}</div></div></div>
-      </div>
-      <div class="d-grid d-sm-flex gap-2">
-        <button class="btn btn-success" id="copy-basket"><i class="bi bi-clipboard me-1"></i>Копировать</button>
-        <button class="btn btn-outline-success" id="mark-bought">Отметить покупку</button>
-      </div>
-    </div></div>
-    <div class="row g-3" id="basket-stores"></div>`;
+  const buyCount = Object.values(basket.byStore).reduce((s, g) => s + g.lines.length, 0);
+  const listOpen = (state.settings.shoppingList || []).filter((x) => !x.done).length;
+  const weekStart = dayjs().subtract(7, "day");
+  const treatsWeek = (state.settings.treats || []).filter((t) => dayjs(t.at).isAfter(weekStart));
+  const treatsSum = treatsWeek.reduce((s, t) => s + (t.cost || 0), 0);
+  const treatsCap = state.settings.treatsWeekly || 2500;
 
+  root.innerHTML = `
+    <div class="sk-hero">
+      <h1>Корзина</h1>
+      <p>Из отмеченных слотов плана — что докупить. Список — свободные пункты «купи то-то» для магазина. Вкусняшки — лимит на неделю.</p>
+    </div>
+    <div class="sk-seg sk-seg-wide" id="basket-tabs">
+      <button type="button" data-tab="plan" class="${tab === "plan" ? "active" : ""}">Из плана</button>
+      <button type="button" data-tab="list" class="${tab === "list" ? "active" : ""}">Список${listOpen ? ` · ${listOpen}` : ""}</button>
+      <button type="button" data-tab="treats" class="${tab === "treats" ? "active" : ""}">Вкусняшки</button>
+    </div>
+    <div id="basket-body"></div>`;
+
+  $$("#basket-tabs [data-tab]").forEach((b) => {
+    b.onclick = () => {
+      state._basketTab = b.dataset.tab;
+      renderBasket();
+    };
+  });
+
+  const body = $("#basket-body");
+  if (tab === "list") return renderShopList(body);
+  if (tab === "treats") return renderTreats(body, treatsWeek, treatsSum, treatsCap);
+
+  const dayNames = state.plan.map((d) => d.dayName);
+  body.innerHTML = `
+    <div class="sk-stat-row">
+      <div class="sk-stat"><span class="sk-meta">Докупить</span><b>${rub(basket.total)}</b></div>
+      <div class="sk-stat"><span class="sk-meta">Позиций</span><b>${buyCount}</b></div>
+      <div class="sk-stat"><span class="sk-meta">Уже есть</span><b>${basket.lines.filter((l) => l.covered).length}</b></div>
+    </div>
+    <div class="sk-card" style="margin-bottom:14px">
+      <div class="sk-meta" style="margin-bottom:8px">Какие слоты включить в закупку</div>
+      <div class="sk-chip-row" id="pick-days"></div>
+      <div class="sk-chip-row" id="pick-meals"></div>
+    </div>
+    <div class="sk-row" style="margin-bottom:12px">
+      <button class="sk-btn sk-btn-primary" id="copy-basket">Скопировать текст</button>
+      <button class="sk-btn sk-btn-accent" id="mark-bought">Купили — в запасы</button>
+      <button class="sk-btn sk-btn-ghost" id="to-list-merge">Перенести в список</button>
+    </div>
+    <div class="store-cols" id="basket-stores"></div>`;
+
+  dayNames.forEach((name, i) => {
+    const on = pick.days.includes(i);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `sk-chip ${on ? "on" : ""}`;
+    b.textContent = name;
+    b.onclick = async () => {
+      if (on) pick.days = pick.days.filter((d) => d !== i);
+      else pick.days = [...pick.days, i].sort((a, b) => a - b);
+      state.settings.basketPick = pick;
+      await persistLocal();
+      renderBasket();
+    };
+    $("#pick-days").appendChild(b);
+  });
+  [
+    ["breakfast", "Завтраки"],
+    ["lunch", "Обеды"],
+    ["dinner", "Ужины"],
+  ].forEach(([key, lab]) => {
+    const on = pick.meals[key] !== false;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `sk-chip ${on ? "on" : ""}`;
+    b.textContent = lab;
+    b.onclick = async () => {
+      pick.meals[key] = !on;
+      state.settings.basketPick = pick;
+      await persistLocal();
+      renderBasket();
+    };
+    $("#pick-meals").appendChild(b);
+  });
+
+  const storesBox = $("#basket-stores");
+  if (!buyCount) {
+    storesBox.innerHTML = `<div class="sk-note">По выбранным слотам докупать нечего — либо всё есть в запасах, либо снимите/добавьте дни выше.</div>`;
+  }
   for (const [storeId, group] of Object.entries(basket.byStore)) {
     const col = document.createElement("div");
-    col.className = "col-12 col-lg-6";
+    col.className = "store-block";
     col.innerHTML = `
-      <div class="card shadow-sm border-0 h-100">
-        <div class="card-header bg-white fw-semibold">${storeName(state.data.stores, storeId)} · ${rub(group.total)}</div>
-        <div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Продукт</th><th>Купить</th><th>₽</th></tr></thead><tbody></tbody></table></div>
-      </div>`;
-    const tb = col.querySelector("tbody");
+      <div class="store-head">
+        <h3>${storeName(state.data.stores, storeId)}</h3>
+        <span class="sk-kpi" style="font-size:1.15rem">${rub(group.total)}</span>
+      </div>
+      <ul class="shop-lines"></ul>`;
+    const ul = col.querySelector("ul");
     group.lines.forEach((l) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${l.name}${l.note ? `<div class="small text-secondary">${l.note}</div>` : ""}</td><td>${amountLabel(state.cat.products[l.id], l.buy)}</td><td>${rub(l.cost)}</td>`;
-      tb.appendChild(tr);
+      const li = document.createElement("li");
+      li.innerHTML = `<span><b>${l.name}</b>${l.note ? `<small>${l.note}</small>` : ""}</span><span>${amountLabel(state.cat.products[l.id], l.buy)}</span><span>${rub(l.cost)}</span>`;
+      ul.appendChild(li);
     });
-    $("#basket-stores").appendChild(col);
+    storesBox.appendChild(col);
   }
 
   $("#copy-basket").onclick = async () => {
@@ -505,15 +671,149 @@ function renderBasket() {
     const items = basket.lines
       .filter((l) => !l.covered)
       .map((l) => ({ id: l.id, name: l.name, buy: l.buy, amount: l.buy, cost: l.cost }));
-    const ev = makeEvent({ type: "spend", category: "cooking", total: Math.round(basket.total), items });
-    state.events.push(ev);
+    if (!items.length) return toast("Нечего отмечать");
+    state.events.push(makeEvent({ type: "spend", category: "cooking", total: Math.round(basket.total), items }));
     state.budget.cookingSpent = (state.budget.cookingSpent || 0) + Math.round(basket.total);
-    // добавляем купленное в запасы
     items.forEach((it) => {
       state.inventory[it.id] = (state.inventory[it.id] || 0) + (it.buy || 0);
     });
     await persistLocal();
-    toast(`Покупка ${rub(basket.total)} учтена`);
+    toast(`Покупка ${rub(basket.total)} → запасы`);
+    renderBasket();
+  };
+  $("#to-list-merge").onclick = async () => {
+    const lines = basket.lines.filter((l) => !l.covered);
+    lines.forEach((l) => {
+      state.settings.shoppingList.push({
+        id: uid(),
+        text: `${l.name} — ${amountLabel(state.cat.products[l.id], l.buy)}`,
+        done: false,
+        store: l.store,
+        at: new Date().toISOString(),
+      });
+    });
+    state._basketTab = "list";
+    await persistLocal();
+    toast(`В список: ${lines.length} поз.`);
+    renderBasket();
+  };
+}
+
+function renderShopList(body) {
+  const items = state.settings.shoppingList || [];
+  body.innerHTML = `
+    <div class="sk-card tone" style="margin-bottom:14px">
+      <h2 style="margin-top:0">Список в магазин</h2>
+      <p class="sk-meta">Жена пишет пункты — муж видит на телефоне в облаке. Как в мессенджере, но здесь.</p>
+      <div class="shop-add">
+        <input class="sk-input sk-input-lg" id="shop-text" placeholder="Молоко 2л, хлеб, салфетки…" />
+        <button class="sk-btn sk-btn-accent" id="shop-add">Добавить</button>
+      </div>
+    </div>
+    <div class="shop-list" id="shop-list"></div>
+    <div class="sk-row" style="margin-top:12px">
+      <button class="sk-btn sk-btn-ghost" id="shop-clear-done">Убрать купленное</button>
+      <button class="sk-btn sk-btn-ghost" id="shop-copy">Скопировать открытые</button>
+    </div>`;
+
+  const box = $("#shop-list");
+  if (!items.length) {
+    box.innerHTML = `<div class="sk-note">Список пуст. Добавьте первое — например «бананы 1 кг».</div>`;
+  }
+  items.forEach((it) => {
+    const row = document.createElement("div");
+    row.className = `shop-item ${it.done ? "done" : ""}`;
+    row.innerHTML = `
+      <button type="button" class="shop-check" aria-label="готово">${it.done ? "✓" : ""}</button>
+      <input class="shop-edit" value="${(it.text || "").replace(/"/g, "&quot;")}" />
+      <button type="button" class="shop-del" aria-label="удалить">×</button>`;
+    row.querySelector(".shop-check").onclick = async () => {
+      it.done = !it.done;
+      await persistLocal();
+      renderBasket();
+    };
+    row.querySelector(".shop-edit").onchange = async (e) => {
+      it.text = e.target.value.trim();
+      await persistLocal();
+    };
+    row.querySelector(".shop-del").onclick = async () => {
+      state.settings.shoppingList = state.settings.shoppingList.filter((x) => x.id !== it.id);
+      await persistLocal();
+      renderBasket();
+    };
+    box.appendChild(row);
+  });
+
+  const add = async () => {
+    const text = $("#shop-text").value.trim();
+    if (!text) return;
+    state.settings.shoppingList.unshift({ id: uid(), text, done: false, at: new Date().toISOString() });
+    await persistLocal();
+    renderBasket();
+  };
+  $("#shop-add").onclick = add;
+  $("#shop-text").onkeydown = (e) => {
+    if (e.key === "Enter") add();
+  };
+  $("#shop-clear-done").onclick = async () => {
+    state.settings.shoppingList = state.settings.shoppingList.filter((x) => !x.done);
+    await persistLocal();
+    renderBasket();
+  };
+  $("#shop-copy").onclick = async () => {
+    const text = state.settings.shoppingList
+      .filter((x) => !x.done)
+      .map((x) => `• ${x.text}`)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text || "—");
+      toast("Скопировано");
+    } catch {
+      prompt("Скопируйте:", text);
+    }
+  };
+}
+
+function renderTreats(body, treatsWeek, treatsSum, treatsCap) {
+  const over = treatsSum > treatsCap;
+  body.innerHTML = `
+    <div class="sk-forecast ${over ? "warn" : ""}">
+      <div><div class="sk-meta">Вкусняшки за неделю</div><div class="sk-kpi">${rub(treatsSum)}</div></div>
+      <div><div class="sk-meta">Лимит</div><div class="sk-kpi" style="font-size:1.2rem">${rub(treatsCap)}</div></div>
+    </div>
+    <div class="sk-card" style="margin-bottom:14px">
+      <div class="shop-add">
+        <input class="sk-input" id="treat-name" placeholder="Что купили" />
+        <input class="sk-input" id="treat-cost" type="number" min="0" placeholder="₽" style="max-width:110px" />
+        <button class="sk-btn sk-btn-accent" id="treat-add">Записать</button>
+      </div>
+    </div>
+    <div class="shop-list" id="treat-list"></div>`;
+  const box = $("#treat-list");
+  if (!treatsWeek.length) box.innerHTML = `<div class="sk-note">Пока пусто на этой неделе.</div>`;
+  treatsWeek
+    .slice()
+    .reverse()
+    .forEach((t) => {
+      const row = document.createElement("div");
+      row.className = "shop-item";
+      row.innerHTML = `<span style="flex:1"><b>${t.name}</b><div class="sk-meta">${dayjs(t.at).format("dd, D MMM")}</div></span><b>${rub(t.cost)}</b><button type="button" class="shop-del">×</button>`;
+      row.querySelector(".shop-del").onclick = async () => {
+        state.settings.treats = state.settings.treats.filter((x) => x.id !== t.id);
+        await persistLocal();
+        renderBasket();
+      };
+      box.appendChild(row);
+    });
+  $("#treat-add").onclick = async () => {
+    const name = $("#treat-name").value.trim();
+    const cost = Math.round(+$("#treat-cost").value || 0);
+    if (!name || !cost) return toast("Название и сумма");
+    state.settings.treats.push({ id: uid(), name, cost, at: new Date().toISOString() });
+    state.events.push(makeEvent({ type: "spend", category: "treats", total: cost, items: [{ name, cost }] }));
+    state.budget.treatsSpent = (state.budget.treatsSpent || 0) + cost;
+    await persistLocal();
+    toast("Записали");
     renderBasket();
   };
 }
@@ -556,7 +856,7 @@ function renderRecipes() {
           <select id="f-tags" multiple placeholder="Теги…"></select>
         </label>
         <label class="sk-field" style="flex-direction:row;align-items:center;gap:8px;min-height:48px">
-          <input type="checkbox" id="f-batch" /> batch 2+ дн
+          <input type="checkbox" id="f-batch" /> сразу на 2+ дня
         </label>
         <label class="sk-field" style="flex-direction:row;align-items:center;gap:8px;min-height:48px">
           <input type="checkbox" id="f-child" /> для ребёнка
@@ -657,7 +957,7 @@ function recipeHtml(d, servingsOverride = null) {
 
     <div class="sk-card tone" style="margin:14px 0">
       <h3 style="margin-top:0">Добавить в ближайшую еду</h3>
-      <p class="sk-meta">Укажите на сколько людей готовите, сколько порций выйдет и на сколько дней растянуть batch.</p>
+      <p class="sk-meta">Сколько взрослых и детских порций, на сколько дней готовите сразу — продукты пересчитаются.</p>
       <div class="sk-plan-form" data-plan-form>
         <label class="sk-field">Приём пищи
           <select class="sk-select" data-f="meal">
@@ -669,17 +969,20 @@ function recipeHtml(d, servingsOverride = null) {
         <label class="sk-field">С какого дня
           <select class="sk-select" data-f="start">${dayOpts}</select>
         </label>
-        <label class="sk-field">Людей
-          <input class="sk-input" type="number" min="1" max="12" value="3" data-f="people" />
+        <label class="sk-field">Взрослых
+          <input class="sk-input" type="number" min="0" max="12" value="2" data-f="adults" />
         </label>
-        <label class="sk-field">Дней (batch)
+        <label class="sk-field">Детских порций
+          <input class="sk-input" type="number" min="0" max="6" value="1" data-f="child" />
+        </label>
+        <label class="sk-field">Готовим сразу на (дней)
           <input class="sk-input" type="number" min="1" max="7" value="${Math.min(3, d.batchDays || 2)}" data-f="days" />
         </label>
-        <label class="sk-field span-2">Порций всего (на всю партию)
+        <label class="sk-field">Порций всего
           <input class="sk-input" type="number" min="1" max="40" value="${Math.max(d.servings, 6)}" data-f="servings" />
         </label>
       </div>
-      <div class="sk-meta" data-scale-hint>Ингредиенты ниже пересчитаны под выбранные порции · сейчас ~${rub(cost)}</div>
+      <div class="sk-meta" data-scale-hint>Ингредиенты ниже под выбранные порции · сейчас ~${rub(cost)}</div>
       <div class="sk-row">
         <button class="sk-btn sk-btn-accent" data-act="to-plan">В план</button>
         <button class="sk-btn sk-btn-ghost" data-act="sync-servings">Пересчитать продукты</button>
@@ -695,23 +998,28 @@ function recipeHtml(d, servingsOverride = null) {
     <div class="sk-ok">Базовая порция рецепта ~<b>${rub(d.costPerServing)}</b></div>
     <div class="sk-row">
       <button class="sk-btn sk-btn-primary" data-act="cooked">Приготовил — списать</button>
-      <button class="sk-btn sk-btn-ghost" data-act="dislike">Не предлагать</button>
+      <button class="sk-btn sk-btn-ghost" data-act="dislike">Не предлагать месяц</button>
       <button class="sk-btn sk-btn-ghost" data-act="love">В любимое</button>
     </div>`;
 }
 
 function readPlanForm(root, d) {
   const g = (name) => root.querySelector(`[data-f="${name}"]`);
-  let people = Math.max(1, +g("people")?.value || 3);
-  let days = Math.max(1, Math.min(7, +g("days")?.value || 1));
-  let servings = Math.max(1, +g("servings")?.value || people * days);
-  // если пользователь крутит людей/дни — предлагаем servings = people * days, но не ломаем ручной ввод servings без sync
+  const adults = Math.max(0, +g("adults")?.value || 2);
+  const child = Math.max(0, +g("child")?.value || 0);
+  const people = Math.max(1, adults + child);
+  const days = Math.max(1, Math.min(7, +g("days")?.value || 1));
+  const equivPerDay = familyServings(adults, child);
+  let servings = Math.max(1, +g("servings")?.value || equivPerDay * days);
   return {
     meal: g("meal")?.value || mealTypeDefault(d),
     startIndex: +g("start")?.value || 0,
     people,
+    adults,
+    child,
     days,
     servings,
+    equivPerDay,
   };
 }
 
@@ -722,8 +1030,8 @@ function refreshIngredientTable(root, d) {
   const tb = root.querySelector("[data-ing-table] tbody");
   const label = root.querySelector("[data-ing-label]");
   const hint = root.querySelector("[data-scale-hint]");
-  if (label) label.textContent = `(на ${form.servings} порц · ${form.people} чел · ${form.days} дн)`;
-  if (hint) hint.textContent = `Ингредиенты под партию · ~${rub(cost)} · ~${Math.round(form.servings / form.days)} порц/день`;
+  if (label) label.textContent = `(на ${form.servings} порц · ${form.adults} взр. + ${form.child} дет. · ${daysRu(form.days)})`;
+  if (hint) hint.textContent = `Ингредиенты под готовку ${daysRu(form.days)} · ~${rub(cost)} · ~${Math.round(form.servings / form.days)} порц/день`;
   if (tb) {
     tb.innerHTML = scaled
       .map((i) => {
@@ -737,13 +1045,15 @@ function refreshIngredientTable(root, d) {
 function bindRecipeActions(d, root) {
   root.dataset.bound = "1";
   const autoServings = () => {
-    const people = +root.querySelector('[data-f="people"]')?.value || 3;
+    const adults = +root.querySelector('[data-f="adults"]')?.value || 2;
+    const child = +root.querySelector('[data-f="child"]')?.value || 0;
     const days = +root.querySelector('[data-f="days"]')?.value || 1;
     const serv = root.querySelector('[data-f="servings"]');
-    if (serv) serv.value = String(people * days);
+    if (serv) serv.value = String(familyServings(adults, child) * days);
     refreshIngredientTable(root, d);
   };
-  root.querySelector('[data-f="people"]')?.addEventListener("change", autoServings);
+  root.querySelector('[data-f="adults"]')?.addEventListener("change", autoServings);
+  root.querySelector('[data-f="child"]')?.addEventListener("change", autoServings);
   root.querySelector('[data-f="days"]')?.addEventListener("change", autoServings);
   root.querySelector('[data-f="servings"]')?.addEventListener("change", () => refreshIngredientTable(root, d));
   root.querySelector('[data-act="sync-servings"]')?.addEventListener("click", () => refreshIngredientTable(root, d));
@@ -767,11 +1077,14 @@ function bindRecipeActions(d, root) {
 
   root.querySelector('[data-act="dislike"]')?.addEventListener("click", async () => {
     if (!state.settings.disliked.includes(d.id)) state.settings.disliked.push(d.id);
+    state.settings.bannedUntil = banForMonth(state.settings, d.id, 30);
     await persistLocal();
-    toast("Скрыли из подборок");
+    toast("Не предлагаем ~месяц");
   });
   root.querySelector('[data-act="love"]')?.addEventListener("click", async () => {
     if (!state.settings.loved.includes(d.id)) state.settings.loved.push(d.id);
+    if (state.settings.bannedUntil?.[d.id]) delete state.settings.bannedUntil[d.id];
+    state.settings.disliked = (state.settings.disliked || []).filter((x) => x !== d.id);
     await persistLocal();
     toast("В любимых");
   });

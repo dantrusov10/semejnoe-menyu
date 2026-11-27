@@ -73,6 +73,11 @@ export function defaultSettings() {
     proteinCaps: { chicken: 4, pork: 3, beef: 2, fish: 2, liver: 1 },
     disliked: [],
     loved: [],
+    bannedUntil: {},
+    shoppingList: [],
+    treats: [],
+    invZones: {},
+    basketPick: { days: [0, 1, 2, 3, 4, 5, 6], meals: { breakfast: true, lunch: true, dinner: true } },
   };
 }
 

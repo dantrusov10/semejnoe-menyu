@@ -14,6 +14,31 @@ export function rub(n) {
   return `${Math.round(n || 0).toLocaleString("ru-RU")} ₽`;
 }
 
+/** «на 1 день» / «на 2 дня» / «на 5 дней» — без слова Batch */
+export function daysRu(n) {
+  const d = Math.max(1, Math.round(n || 1));
+  const mod10 = d % 10;
+  const mod100 = d % 100;
+  let word = "дней";
+  if (mod10 === 1 && mod100 !== 11) word = "день";
+  else if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) word = "дня";
+  return `на ${d} ${word}`;
+}
+
+export function isBanned(dishId, settings, now = new Date()) {
+  const until = settings?.bannedUntil?.[dishId];
+  if (!until) return false;
+  return new Date(until) > now;
+}
+
+export function banForMonth(settings, dishId, days = 30) {
+  const next = { ...(settings.bannedUntil || {}) };
+  const until = new Date();
+  until.setDate(until.getDate() + days);
+  next[dishId] = until.toISOString();
+  return next;
+}
+
 export function amountLabel(product, amount) {
   if (!product) return String(amount);
   if (product.unit === "pcs") return `${amount} шт`;
@@ -51,7 +76,7 @@ export function matchFromInventory(dishes, products, inventory, settings, opts =
   for (const dish of dishes) {
     const hard = violatesHardConstraints(dish, settings);
     if (hard) continue;
-    if (settings.disliked?.includes(dish.id)) continue;
+    if (settings.disliked?.includes(dish.id) || isBanned(dish.id, settings)) continue;
     if (!dish.ingredients?.length) continue;
 
     let portions = Infinity;
@@ -133,6 +158,13 @@ export function scaleIngredients(dish, targetServings) {
     else amount = Math.round(amount);
     return { id: ing.id, amount };
   });
+}
+
+/** Взрослые + детские порции → общий масштаб (детская ~0.55 взрослой) */
+export function familyServings(adults, childPortions, childFactor = 0.55) {
+  const a = Math.max(0, +adults || 0);
+  const c = Math.max(0, +childPortions || 0);
+  return Math.max(1, Math.round(a + c * childFactor));
 }
 
 /**
@@ -223,14 +255,13 @@ function packRound(product, buy) {
 export function draftWeekPlan(data, settings, weekNum = 1) {
   const days = data.menu.filter((m) => m.week === weekNum);
   const dishes = Object.fromEntries(data.dishes.map((d) => [d.id, d]));
+  const blocked = (id) => settings.disliked?.includes(id) || isBanned(id, settings);
   const plan = days.map((day) => {
     const pick = (id) => {
-      if (!settings.disliked?.includes(id)) return id;
+      if (!blocked(id)) return id;
       const dish = dishes[id];
       if (!dish) return id;
-      const alt = data.dishes.find(
-        (d) => d.type === dish.type && d.id !== id && !settings.disliked.includes(d.id)
-      );
+      const alt = data.dishes.find((d) => d.type === dish.type && d.id !== id && !blocked(d.id));
       return alt?.id || id;
     };
     return {
@@ -278,27 +309,34 @@ export function planDayIndex(plan) {
   return Math.min(monBased, plan.length - 1);
 }
 
-export function slotsFromPlan(plan, dishes, days = null) {
-  const use = days ? plan.filter((_, i) => days.includes(i)) : plan;
+/**
+ * Слоты плана → корзина.
+ * pick: { days?: number[], meals?: { breakfast?, lunch?, dinner? } }
+ */
+export function slotsFromPlan(plan, dishes, pick = null) {
+  const dayIdx = pick?.days;
+  const meals = pick?.meals || { breakfast: true, lunch: true, dinner: true };
   const slots = [];
-  for (const day of use) {
+  plan.forEach((day, idx) => {
+    if (dayIdx && !dayIdx.includes(idx)) return;
     for (const key of ["breakfast", "lunch", "dinner"]) {
+      if (meals[key] === false) continue;
       const id = day[key];
       const d = dishes[id];
       if (!d) continue;
       const meta = day.meta?.[key];
-      // порции на день: если batch на N дней — делим партийные servings на дни, иначе meta.servings / base
       const servings = meta?.servingsPerDay || meta?.servings || d.servings;
       slots.push({
         recipeId: id,
         servings,
         meal: key,
-        label: day.label,
+        dayIndex: idx,
+        label: day.label || day.dayName,
         people: meta?.people,
         batchDays: meta?.batchDays,
       });
     }
-  }
+  });
   return slots;
 }
 
@@ -335,7 +373,7 @@ export function placeRecipeInPlan(plan, opts) {
       },
       cookHint:
         i === 0
-          ? `Новая варка: ${meal}, ~${totalServings} порц на ${days} дн.`
+          ? `Новая варка: ${meal}, ~${totalServings} порц ${daysRu(days)}.`
           : `Разогрев (${i + 1}/${days})`,
     };
   }
