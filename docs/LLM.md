@@ -7,7 +7,7 @@
 | Задача | Провайдер | Секрет / binding |
 |--------|-----------|------------------|
 | Умные замены (текст) | Gemini 3.5 Flash Lite (+ fallback) **или** Workers AI Llama | `GEMINI_API_KEY` и/или `[ai] binding = "AI"` |
-| Фото полки | Gemini 3.5 Flash Lite (vision) | `GEMINI_API_KEY` |
+| Скрин заказа / фото пакета | Gemini 3.5 Flash Lite (vision) | `GEMINI_API_KEY` |
 
 Ключ Gemini: https://aistudio.google.com/apikey (бесплатный tier).
 
@@ -35,11 +35,14 @@ Workers AI включается строкой `[ai] binding = "AI"` в `wrangle
 
 - `GET /ai/quota` — лимиты дня (suggest 40, vision 10)
 - `POST /ai/suggest` — переранжирование shortlist
-- `POST /ai/vision` — фото → черновик продуктов
+- `POST /ai/vision` — разбор картинок → черновик продуктов  
+  - `mode: "screenshot"` — скрин(ы) заказа Яндекс/Ашан и т.п. (до 6 кадров)  
+  - `mode: "photo"` — фото пакета/стола после доставки  
+  - `images: [{ data, mimeType }]` или одно `image`
 
 Без ключа: suggest падает на локальный скорер; vision отвечает 501.
 
 ## Клиент
 
 - Рецепт → «Умная замена» зовёт `/ai/suggest`
-- Запасы → «Пополнить» → «С фото»
+- Запасы → «Пополнить» → **Из скрина** (галерея, несколько) или **По фото** (камера) → правка черновика → в запас

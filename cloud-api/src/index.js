@@ -48,27 +48,53 @@ function extractJson(text) {
   }
 }
 
-async function callGemini(env, { system, user, imageBase64, mimeType }) {
+function normalizeVisionImages({ imageBase64, mimeType, images }) {
+  const out = [];
+  if (Array.isArray(images)) {
+    for (const im of images.slice(0, 6)) {
+      const raw = im?.data || im?.image || im?.base64;
+      if (!raw || typeof raw !== "string") continue;
+      out.push({
+        mime: im.mimeType || im.mime || "image/jpeg",
+        data: raw.replace(/^data:[^;]+;base64,/, ""),
+      });
+    }
+  }
+  if (!out.length && imageBase64) {
+    out.push({
+      mime: mimeType || "image/jpeg",
+      data: String(imageBase64).replace(/^data:[^;]+;base64,/, ""),
+    });
+  }
+  return out;
+}
+
+async function callGemini(env, { system, user, imageBase64, mimeType, images, maxOutputTokens }) {
   const key = env.GEMINI_API_KEY;
   if (!key) return null;
+  const visionImgs = normalizeVisionImages({ imageBase64, mimeType, images });
+  const hasVision = visionImgs.length > 0;
   // 2.0/2.5 flash закрыты для новых ключей; 3.x flash часто 503 — берём lite + fallback.
-  const models = imageBase64
+  const models = hasVision
     ? ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash"]
     : ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash"];
   const parts = [];
   if (system) parts.push({ text: system });
-  if (imageBase64) {
+  for (const im of visionImgs) {
     parts.push({
       inline_data: {
-        mime_type: mimeType || "image/jpeg",
-        data: imageBase64.replace(/^data:[^;]+;base64,/, ""),
+        mime_type: im.mime,
+        data: im.data,
       },
     });
   }
   parts.push({ text: typeof user === "string" ? user : JSON.stringify(user) });
   const payload = JSON.stringify({
     contents: [{ role: "user", parts }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: maxOutputTokens || (hasVision ? 2048 : 1024),
+    },
   });
   let lastErr = "Gemini unavailable";
   for (const model of models) {
@@ -88,6 +114,23 @@ async function callGemini(env, { system, user, imageBase64, mimeType }) {
     return data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("\n") || "";
   }
   throw new Error(lastErr);
+}
+
+function visionPrompt(mode) {
+  if (mode === "screenshot") {
+    return `Ты разбираешь скриншот(ы) заказа из доставки еды/продуктов (Яндекс Доставка, Ашан, Лавка, Перекрёсток, Самокат и т.п.).
+Извлеки ВСЕ товарные позиции: название, количество, единицы.
+Игнорируй: доставку, сервисный сбор, промо без товара, адреса, кнопки UI, итоговую сумму как отдельную позицию.
+Если несколько скринов — это страницы одного заказа: объедини и не дублируй одинаковые строки.
+Верни ТОЛЬКО JSON:
+{"items":[{"nameGuess":"...","qty":1,"unit":"pcs|g|kg|ml|l|pack","confidence":0.0,"notes":""}],"unknown":["..."],"sourceHint":"order_screenshot"}
+qty — как в заказе (шт/уп); вес в граммах → unit=g, qty в граммах. Не выдумывай товары, которых нет на экране.`;
+  }
+  return `Ты распознаёшь продукты на фото пакета/покупки/стола после доставки для семейного приложения.
+Перечисли видимые продукты питания (и съедобные расходники). Несколько одинаковых — суммируй qty.
+Верни ТОЛЬКО JSON:
+{"items":[{"nameGuess":"...","qty":1,"unit":"pcs|g|kg|ml|l|pack","confidence":0.0,"notes":""}],"unknown":["..."],"sourceHint":"bag_photo"}
+unit только: g,kg,ml,l,pcs,pack. Не выдумывай бренды без этикетки. Если не еда — items:[].`;
 }
 
 async function callWorkersAi(env, prompt) {
@@ -240,58 +283,74 @@ reason ≤ 120 символов. Не читай нотаций про алко�
 async function handleVision(request, env, family) {
   const quota = await getQuota(env, family);
   if (quota.vision >= VISION_LIMIT) {
-    return json({ error: "quota", message: "Лимит фото на сегодня", quota: { ...quota, suggestLimit: SUGGEST_LIMIT, visionLimit: VISION_LIMIT } }, 429);
+    return json({ error: "quota", message: "Лимит разборов фото на сегодня", quota: { ...quota, suggestLimit: SUGGEST_LIMIT, visionLimit: VISION_LIMIT } }, 429);
   }
   if (!env.GEMINI_API_KEY) {
     return json({ error: "no_vision", message: "Нужен GEMINI_API_KEY в Worker secrets" }, 501);
   }
   const body = await request.json();
-  const image = body.image;
-  if (!image || typeof image !== "string") return json({ error: "no_image" }, 400);
-  if (image.length > 2_000_000) return json({ error: "image_too_large" }, 413);
+  const mode = body.mode === "screenshot" ? "screenshot" : "photo";
+  const images = normalizeVisionImages({
+    imageBase64: body.image,
+    mimeType: body.mimeType,
+    images: body.images,
+  });
+  if (!images.length) return json({ error: "no_image" }, 400);
+  const totalChars = images.reduce((s, im) => s + im.data.length, 0);
+  if (totalChars > 6_000_000) return json({ error: "image_too_large", message: "Слишком много/тяжёлые фото — меньше скринов за раз" }, 413);
 
   const known = Array.isArray(body.knownProducts) ? body.knownProducts.slice(0, 400) : [];
-  const system = `Ты распознаёшь продукты на фото полки/холодильника для семейного приложения.
-Верни ТОЛЬКО JSON:
-{"items":[{"nameGuess":"...","qty":1,"unit":"pcs|g|kg|ml|l|pack","confidence":0.0,"notes":""}],"unknown":["..."]}
-unit только: g,kg,ml,l,pcs,pack. Не выдумывай бренды без этикетки. Если не еда — items:[].`;
+  const system = visionPrompt(mode);
 
   let text;
   try {
     text = await callGemini(env, {
       system,
-      user: `Каталог подсказок (имена): ${known
-        .slice(0, 120)
+      user: `Режим: ${mode}. Каталог подсказок (имена): ${known
+        .slice(0, 140)
         .map((p) => p.name)
         .join(", ")}`,
-      imageBase64: image,
-      mimeType: body.mimeType || "image/jpeg",
+      images,
+      maxOutputTokens: mode === "screenshot" ? 3072 : 2048,
     });
   } catch (e) {
     return json({ error: "gemini", message: String(e.message || e) }, 502);
   }
 
   const parsed = extractJson(text) || { items: [], unknown: [] };
-  const items = [];
+  const merged = new Map();
   for (const it of parsed.items || []) {
     const hit = matchProduct(it.nameGuess, known);
     const unit = ["g", "kg", "ml", "l", "pcs", "pack"].includes(it.unit) ? it.unit : hit?.unit || "pcs";
-    items.push({
+    const nameGuess = String(it.nameGuess || hit?.name || "").slice(0, 80);
+    if (!nameGuess) continue;
+    const key = `${nameGuess.toLowerCase()}|${unit}`;
+    const qty = Math.max(0, +it.qty || 1);
+    const prev = merged.get(key);
+    if (prev) {
+      prev.qty += qty;
+      prev.confidence = Math.max(prev.confidence, Math.min(1, Math.max(0, +(it.confidence ?? 0.5))));
+      continue;
+    }
+    merged.set(key, {
       productId: hit?.id || null,
-      nameGuess: String(it.nameGuess || hit?.name || "").slice(0, 80),
-      qty: Math.max(0, +it.qty || 1),
+      nameGuess,
+      qty,
       unit,
       confidence: Math.min(1, Math.max(0, +(it.confidence ?? hit?._score ?? 0.5))),
       notes: String(it.notes || "").slice(0, 80),
     });
   }
+  const items = [...merged.values()];
 
   await bumpQuota(env, family, "vision");
   const q2 = await getQuota(env, family);
   return json({
     items,
     unknown: (parsed.unknown || []).slice(0, 20).map(String),
+    mode,
     provider: "gemini",
+    imageCount: images.length,
     quota: { suggest: q2.suggest, vision: q2.vision, suggestLimit: SUGGEST_LIMIT, visionLimit: VISION_LIMIT },
   });
 }

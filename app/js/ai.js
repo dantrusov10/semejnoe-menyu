@@ -44,16 +44,33 @@ export async function aiSuggest(payload) {
   return data;
 }
 
-/** Фото полки → черновик позиций */
-export async function aiVision({ image, mimeType, knownProducts }) {
+/**
+ * Разбор фото/скринов → черновик позиций.
+ * mode: "photo" | "screenshot"
+ * images: [{ dataUrl|image, mimeType }] или один image
+ */
+export async function aiVision({ image, mimeType, images, knownProducts, mode = "photo" }) {
+  const payload = {
+    mode: mode === "screenshot" ? "screenshot" : "photo",
+    knownProducts,
+  };
+  if (Array.isArray(images) && images.length) {
+    payload.images = images.slice(0, 6).map((im) => ({
+      data: im.dataUrl || im.image || im.data,
+      mimeType: im.mimeType || "image/jpeg",
+    }));
+  } else {
+    payload.image = image;
+    payload.mimeType = mimeType || "image/jpeg";
+  }
   const res = await fetch(`${APP_CONFIG.apiBase}/ai/vision`, {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify({ image, mimeType, knownProducts }),
+    body: JSON.stringify(payload),
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 429) {
-    const err = new Error(data.message || "Лимит фото на сегодня");
+    const err = new Error(data.message || "Лимит разборов на сегодня");
     err.code = "quota";
     throw err;
   }
@@ -68,7 +85,7 @@ export async function aiVision({ image, mimeType, knownProducts }) {
   return data;
 }
 
-/** Сжать фото для vision (долгая сторона ≤1280, jpeg) */
+/** Сжать изображение для vision. Для скринов — выше качество/разрешение (текст UI). */
 export function compressImageFile(file, maxSide = 1280, quality = 0.72) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -83,14 +100,21 @@ export function compressImageFile(file, maxSide = 1280, quality = 0.72) {
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, width, height);
       ctx.drawImage(img, 0, 0, width, height);
       const dataUrl = canvas.toDataURL("image/jpeg", quality);
       resolve({ dataUrl, mimeType: "image/jpeg" });
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error("Не удалось прочитать фото"));
+      reject(new Error("Не удалось прочитать изображение"));
     };
     img.src = url;
   });
+}
+
+export function compressForVisionMode(file, mode) {
+  if (mode === "screenshot") return compressImageFile(file, 1600, 0.88);
+  return compressImageFile(file, 1280, 0.72);
 }

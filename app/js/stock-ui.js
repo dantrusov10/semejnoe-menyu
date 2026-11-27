@@ -30,7 +30,7 @@ import {
 import { makeEvent } from "./sync.js";
 import { productIcon } from "./icons.js";
 import { avgUnitPrices, estimatePlanCostSmart, estimateDishCost, guessSpendCategory, SPEND_LABELS, priceHistory } from "./stats.js";
-import { aiVision, compressImageFile, aiQuota } from "./ai.js";
+import { aiVision, compressForVisionMode, aiQuota } from "./ai.js";
 
 const SHOP_TEMPLATES = [
   {
@@ -279,10 +279,15 @@ export function createStockUi(ctx) {
     $("#productModal")?.classList.remove("show");
   }
 
-  function openVisionDraft(items, unknown) {
-    $("#productModalTitle").textContent = "Черновик с фото";
+  function openVisionDraft(items, unknown, meta = {}) {
+    const title = meta.mode === "screenshot" ? "Черновик со скрина заказа" : "Черновик с фото";
+    const lead =
+      meta.mode === "screenshot"
+        ? "Проверьте разбор заказа: поправьте названия/кол-во, снимите лишнее, затем в запас."
+        : "Проверьте, что на фото: поправьте при необходимости и добавьте в запас.";
+    $("#productModalTitle").textContent = title;
     $("#productModalBody").innerHTML = `
-      <p class="sk-meta">Проверьте позиции и отметьте, что добавить в запас. Неопознанное можно завести вручную.</p>
+      <p class="sk-meta">${lead}${meta.imageCount > 1 ? ` · кадров: ${meta.imageCount}` : ""}</p>
       ${unknown?.length ? `<div class="sk-note">Неясно: ${unknown.join(", ")}</div>` : ""}
       <div id="vis-list" style="margin-top:10px"></div>
       <div class="sk-row" style="margin-top:12px">
@@ -335,44 +340,61 @@ export function createStockUi(ctx) {
     };
   }
 
+  async function runVisionFromFiles(fileList, mode) {
+    const files = [...(fileList || [])].filter(Boolean).slice(0, 6);
+    if (!files.length) return;
+    try {
+      toast(mode === "screenshot" ? `Читаем скрин${files.length > 1 ? "ы" : ""}…` : "Разбираем фото…");
+      const images = [];
+      for (const file of files) {
+        const { dataUrl, mimeType } = await compressForVisionMode(file, mode);
+        images.push({ dataUrl, mimeType });
+      }
+      const knownProducts = allProducts().map((p) => ({ id: p.id, name: p.name, unit: p.unit }));
+      const res = await aiVision({ images, knownProducts, mode });
+      if (!res.items?.length) {
+        toast(res.unknown?.length ? "Ничего не распознали" : "Пусто");
+        return;
+      }
+      openVisionDraft(res.items, res.unknown, { mode, imageCount: res.imageCount || images.length });
+    } catch (err) {
+      toast(err.message || "Не удалось разобрать");
+    }
+  }
+
   function openRestockFlow() {
     $("#productModalTitle").textContent = "Пополнить";
     $("#productModalBody").innerHTML = `
-      <p class="sk-meta">Что появилось дома в обход списка покупок — выберите из каталога, создайте новое или сфотографируйте полку.</p>
-      <div class="sk-row" style="margin-bottom:12px">
-        <label class="sk-btn sk-btn-accent" style="cursor:pointer">С фото
-          <input type="file" id="rs-photo" accept="image/*" capture="environment" hidden />
+      <p class="sk-meta">Заказ со скрина приложения доставки или фото пакета после приезда — разбор через AI, вы правите и подтверждаете.</p>
+      <div class="sk-row" style="margin-bottom:8px;align-items:stretch">
+        <label class="sk-btn sk-btn-accent" style="cursor:pointer;flex:1">Из скрина
+          <input type="file" id="rs-shot" accept="image/*" multiple hidden />
         </label>
-        <span class="sk-meta" id="rs-ai-quota"></span>
+        <label class="sk-btn sk-btn-primary" style="cursor:pointer;flex:1">По фото
+          <input type="file" id="rs-photo" accept="image/*" capture="environment" multiple hidden />
+        </label>
       </div>
+      <p class="sk-meta" style="margin:0 0 12px">Скрин: Яндекс/Ашан и т.п. (можно несколько). Фото: пакет/стол после доставки.</p>
+      <span class="sk-meta" id="rs-ai-quota" style="display:block;margin-bottom:12px"></span>
       <div class="shop-ac" style="margin-bottom:12px">
-        <input class="sk-input sk-input-lg" id="rs-q" placeholder="Начните вводить название…" />
+        <input class="sk-input sk-input-lg" id="rs-q" placeholder="Или вручную: начните вводить название…" />
         <div class="shop-ac-list" id="rs-ac" style="display:none"></div>
       </div>
       <button class="sk-btn sk-btn-ghost sk-btn-block" id="rs-new">Создать новый продукт</button>`;
     aiQuota().then((q) => {
       if (q && $("#rs-ai-quota")) {
         $("#rs-ai-quota").textContent = q.gemini
-          ? `фото сегодня ${q.vision}/${q.visionLimit}`
-          : "vision: нужен GEMINI_API_KEY на Worker";
+          ? `разборов сегодня ${q.vision}/${q.visionLimit}`
+          : "AI-фото: нужен GEMINI_API_KEY на Worker";
       }
     });
-    $("#rs-photo")?.addEventListener("change", async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      try {
-        toast("Распознаём…");
-        const { dataUrl, mimeType } = await compressImageFile(file);
-        const knownProducts = allProducts().map((p) => ({ id: p.id, name: p.name, unit: p.unit }));
-        const res = await aiVision({ image: dataUrl, mimeType, knownProducts });
-        if (!res.items?.length) {
-          toast(res.unknown?.length ? "Ничего не распознали" : "Пусто");
-          return;
-        }
-        openVisionDraft(res.items, res.unknown);
-      } catch (err) {
-        toast(err.message || "Vision ошибка");
-      }
+    $("#rs-shot")?.addEventListener("change", (e) => {
+      runVisionFromFiles(e.target.files, "screenshot");
+      e.target.value = "";
+    });
+    $("#rs-photo")?.addEventListener("change", (e) => {
+      runVisionFromFiles(e.target.files, "photo");
+      e.target.value = "";
     });
     const ac = $("#rs-ac");
     const rsQ = $("#rs-q");
