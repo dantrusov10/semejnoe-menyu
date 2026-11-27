@@ -115,18 +115,103 @@ function costOf(ingredients) {
   );
 }
 
+function inferCategory(d) {
+  if (d.category) return d.category;
+  if (d.type === "breakfast") return "завтраки";
+  if (d.type === "soup") return "супы";
+  if (d.type === "snack") return "перекусы";
+  const t = new Set(d.tags || []);
+  if (t.has("рыба")) return "рыба";
+  if (t.has("печень")) return "печень";
+  if (t.has("фарш") || (d.ing || []).some(([id]) => String(id).includes("mince"))) return "фарш";
+  if (t.has("курица") || (d.ing || []).some(([id]) => String(id).includes("chicken"))) return "птица";
+  if ((d.ing || []).some(([id]) => String(id).includes("pork") || String(id).includes("beef"))) return "мясо";
+  if (t.has("веге")) return "без мяса";
+  return "основные";
+}
+
+function inferProtein(d) {
+  const ids = (d.ing || []).map(([id]) => id).join(" ");
+  if (/pollock|sole|tilapia|salmon|herring/.test(ids)) return "рыба";
+  if (/liver/.test(ids)) return "печень";
+  if (/mince/.test(ids)) return "фарш";
+  if (/chicken|turkey/.test(ids)) return "птица";
+  if (/pork|beef/.test(ids)) return "мясо";
+  if (d.type === "breakfast" || d.type === "snack") return "без мяса";
+  return "другое";
+}
+
+function inferEquipment(d) {
+  const tags = new Set(d.tags || []);
+  const name = (d.name || "").toLowerCase();
+  const eq = [];
+  if (tags.has("духовка") || name.includes("запеч") || name.includes("духов")) eq.push("духовка");
+  if (tags.has("мультиварка") || name.includes("мультивар")) eq.push("мультиварка");
+  if (name.includes("аэрогрил")) eq.push("аэрогриль");
+  if (name.includes("блендер") || name.includes("крем-суп") || name.includes("пюре")) eq.push("блендер");
+  if (!eq.length) eq.push("плита");
+  return eq;
+}
+
+function expandSteps(d, baseSteps) {
+  const steps = [...(baseSteps || [])];
+  const cat = inferCategory(d);
+  const preface = [];
+  preface.push("Подготовка: достаньте продукты заранее; мясо/рыбу промокните бумажным полотенцем.");
+  if ((d.batchDays || 1) >= 2) {
+    preface.push(`Batch: готовьте сразу на ${d.batchDays} дн. Остудите, разложите в контейнеры, в холодильник не дольше ${Math.min(4, d.batchDays + 1)} суток; часть можно заморозить.`);
+  }
+  if (cat === "супы") {
+    preface.push("Суп: сначала бульон/заправка, овощи — по твёрдости (картофель раньше зелени). Соль — в конце, детскую порцию отлейте до сильных специй.");
+  }
+  if (cat === "рыба") {
+    preface.push("Рыба: только филе; проверьте пальцами на кости. Не пересушивайте — снимайте с огня, как только мякоть стала матовой.");
+  }
+  if (cat === "печень") {
+    preface.push("Печень: не солдите заранее сильно; жарьте/тушите коротко, иначе будет жёсткой. Для ребёнка мелко порубите.");
+  }
+  if (d.type === "breakfast" && (d.tags || []).includes("каша")) {
+    preface.push("Каша: крупу промойте; жидкость держите с запасом — каша густеет. Сахар/мёд — только во взрослую тарелку.");
+  }
+  const after = [
+    "Подача: тёплым; к детской порции уберите острое и крупный лук/чеснок по вкусу ребёнка.",
+    "После еды: отметьте в приложении, что приготовили — запасы спишутся при синхронизации.",
+  ];
+  // детализируем короткие шаги
+  const detailed = steps.map((s, i) => {
+    if (s.length > 80) return `${i + 1}. ${s}`;
+    return `${i + 1}. ${s} (не отходите далеко — на этом шаге легко передержать).`;
+  });
+  return [...preface, ...detailed, ...after];
+}
+
 function dish(d) {
   const ingredients = ing(d.ing);
+  const tags = [...new Set([...(d.tags || []), inferCategory(d), inferProtein(d)])];
+  const category = inferCategory(d);
+  const equipment = inferEquipment(d);
+  const steps = expandSteps(d, d.steps);
   return {
     id: d.id,
     name: d.name,
     type: d.type,
+    category,
+    protein: inferProtein(d),
+    equipment,
     batchDays: d.batchDays ?? 1,
     servings: d.servings ?? 6,
     timeMin: d.timeMin ?? 40,
-    child: d.child ?? "Без сахара/мёда/орехов; соль умеренно; специи минимально на детскую порцию.",
-    tags: d.tags ?? [],
-    steps: d.steps,
+    activeMin: d.activeMin ?? Math.min(d.timeMin ?? 40, 25),
+    child: d.child ?? "Без сахара/мёда/орехов; соль умеренно; специи минимально на детскую порцию. Рыбу — только без костей.",
+    description:
+      d.description ||
+      `${d.name}: домашнее блюдо на семью из 3, партия ~${d.batchDays ?? 1} дн. Экономичный рецепт под Ашан / Парное мясо.`,
+    tags,
+    steps,
+    tips: d.tips || [
+      "Соль лучше недоложить — досолить в тарелке.",
+      "Разогрев: плита под крышкой или микроволновка с крышкой, чтобы не пересохло.",
+    ],
     ingredients,
     costBatch: costOf(ingredients),
     stores: [...new Set(ingredients.map((i) => byId[i.id]?.store).filter(Boolean))],
@@ -762,7 +847,7 @@ renderPrices();
 </html>
 `;
 
-fs.writeFileSync(path.join(root, "index.html"), html, "utf8");
+fs.writeFileSync(path.join(root, "prototype.html"), html, "utf8");
 
 const cookingSample = menu.slice(0, 30).reduce((s, day) => {
   return s + [day.breakfast, day.lunch, day.dinner, ...day.snacks].reduce((a, id) => a + (dishMap[id]?.costPerServing || 0), 0);
@@ -772,4 +857,4 @@ console.log("Dishes:", allDishes.length);
 console.log("Menu days:", menu.length);
 console.log("Products:", products.length);
 console.log("Sample 30-day sum of per-serving lines (rough):", Math.round(cookingSample), "₽");
-console.log("Wrote data/app-data.js, data/app-data.json, index.html");
+console.log("Wrote data/app-data.js, data/app-data.json, prototype.html (index.html is the MVP app — do not overwrite)");

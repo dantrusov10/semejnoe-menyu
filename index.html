@@ -3,57 +3,77 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#234e3a" />
+  <meta name="theme-color" content="#198754" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>Семейная кухня</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,650&family=Manrope:wght@500;650;750&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="app/css/app.css" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet" />
+  <link href="app/css/app.css" rel="stylesheet" />
 </head>
-<body class="profile-kitchen">
-  <div class="app-shell">
-    <header class="topbar">
-      <div class="brand">
-        <h1>Семейная кухня</h1>
-        <p>Запасы → меню → корзина → готовка → деньги. Богданиха · Ашан · Пятёрочка · Парное мясо.</p>
+<body class="bg-body-tertiary profile-kitchen">
+  <nav class="navbar navbar-expand-lg bg-success bg-gradient sticky-top shadow-sm" data-bs-theme="dark">
+    <div class="container-xxl">
+      <a class="navbar-brand fw-semibold" href="#"><i class="bi bi-egg-fried me-1"></i>Семейная кухня</a>
+      <div class="d-flex align-items-center gap-2 ms-auto me-2">
+        <span class="badge text-bg-light text-success d-none d-sm-inline" id="sync-badge">локально</span>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Профиль">
+          <button type="button" class="btn btn-outline-light active" data-profile="kitchen">Кухня</button>
+          <button type="button" class="btn btn-outline-light" data-profile="command">Командный</button>
+        </div>
       </div>
-      <div class="profile-switch" role="group" aria-label="Профиль">
-        <button type="button" data-profile="kitchen" class="active">Кухня</button>
-        <button type="button" data-profile="command">Командный</button>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav"><span class="navbar-toggler-icon"></span></button>
+      <div class="collapse navbar-collapse" id="mainNav">
+        <ul class="navbar-nav ms-lg-3 gap-lg-1" id="nav-list">
+          <li class="nav-item"><button class="nav-link active btn btn-link" data-screen="today">Сегодня</button></li>
+          <li class="nav-item"><button class="nav-link btn btn-link" data-screen="plan">План</button></li>
+          <li class="nav-item"><button class="nav-link btn btn-link" data-screen="inventory">Запасы</button></li>
+          <li class="nav-item"><button class="nav-link btn btn-link" data-screen="basket">Корзина</button></li>
+          <li class="nav-item"><button class="nav-link btn btn-link" data-screen="recipes">Рецепты</button></li>
+          <li class="nav-item" data-cmd-only><button class="nav-link btn btn-link" data-screen="stats">Статистика</button></li>
+          <li class="nav-item" data-cmd-only><button class="nav-link btn btn-link" data-screen="budget">Бюджет</button></li>
+          <li class="nav-item"><button class="nav-link btn btn-link" data-screen="sync">Синхрон</button></li>
+        </ul>
       </div>
-    </header>
+    </div>
+  </nav>
 
-    <nav class="nav" aria-label="Разделы">
-      <button type="button" data-screen="today" class="active">Сегодня</button>
-      <button type="button" data-screen="plan">План</button>
-      <button type="button" data-screen="inventory">Запасы</button>
-      <button type="button" data-screen="basket">Корзина</button>
-      <button type="button" data-screen="recipes">Рецепты</button>
-      <button type="button" data-screen="budget" data-cmd-only>Бюджет</button>
-      <button type="button" data-screen="family" data-cmd-only>Семья</button>
-    </nav>
+  <main class="container-xxl py-3 py-md-4" id="app-root">
+    <section class="screen" id="screen-today"></section>
+    <section class="screen d-none" id="screen-plan"></section>
+    <section class="screen d-none" id="screen-inventory"></section>
+    <section class="screen d-none" id="screen-basket"></section>
+    <section class="screen d-none" id="screen-recipes"></section>
+    <section class="screen d-none" id="screen-stats"></section>
+    <section class="screen d-none" id="screen-budget"></section>
+    <section class="screen d-none" id="screen-sync"></section>
+  </main>
 
-    <main>
-      <section class="panel active" id="screen-today"></section>
-      <section class="panel" id="screen-plan"></section>
-      <section class="panel" id="screen-inventory"></section>
-      <section class="panel" id="screen-basket"></section>
-      <section class="panel" id="screen-recipes"></section>
-      <section class="panel" id="screen-budget"></section>
-      <section class="panel" id="screen-family"></section>
-    </main>
-
-    <p class="footer-hint">Данные хранятся в браузере (IndexedDB). Экспорт — в разделе «Семья».</p>
-  </div>
-
-  <div class="modal" id="modal">
-    <div class="card modal-card">
-      <button type="button" class="btn btn-ghost" id="modal-close" style="position:absolute;right:12px;top:12px">Закрыть</button>
-      <div id="modal-body"></div>
+  <div class="modal fade" id="recipeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-sm-down">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-title fs-5" id="recipeModalTitle">Рецепт</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body" id="recipeModalBody"></div>
+      </div>
     </div>
   </div>
-  <div class="toast" id="toast" role="status"></div>
 
+  <div class="toast-container position-fixed bottom-0 start-50 translate-middle-x p-3">
+    <div id="liveToast" class="toast align-items-center text-bg-dark border-0" role="status">
+      <div class="d-flex">
+        <div class="toast-body" id="toastBody"></div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
   <script src="data/app-data.js"></script>
   <script type="module" src="app/js/app.js"></script>
 </body>
