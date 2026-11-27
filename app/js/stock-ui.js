@@ -95,6 +95,19 @@ export function createStockUi(ctx) {
     return state.settings.shoppingList;
   }
 
+  function categoryOptions() {
+    return [...new Set(allProducts().map((p) => p.category).filter(Boolean))].sort();
+  }
+
+  function setProductMeta(id, patch) {
+    if (!state.settings.productMeta) state.settings.productMeta = {};
+    state.settings.productMeta[id] = { ...(state.settings.productMeta[id] || {}), ...patch };
+    const p = state.cat.products[id];
+    if (p) Object.assign(p, patch);
+    const custom = state.settings.customProducts?.find((x) => x.id === id);
+    if (custom) Object.assign(custom, patch);
+  }
+
   function registerCustomProduct({ name, unit, brand, photo, category }) {
     const id = `custom_${name.toLowerCase().replace(/[^a-zа-я0-9]+/gi, "_").slice(0, 40)}_${Math.random().toString(36).slice(2, 5)}`;
     const base = inferBaseUnit(unit) || "g";
@@ -129,13 +142,19 @@ export function createStockUi(ctx) {
     const amt = productId ? invAmount(state.inventory, productId) : 0;
     const disp = amt ? fromBaseAmount(amt, p) : { qty: "", unit: unitOptions(p)[0]?.value || "g" };
 
+    const cats = categoryOptions();
+    const curCat = p?.category || state.settings.productMeta?.[productId]?.category || "";
     $("#productModalTitle").textContent = mode === "restock" || mode === "restock-new" ? "Пополнить запас" : p?.name || "Продукт";
     $("#productModalBody").innerHTML = `
       ${p ? `<div class="sk-row" style="align-items:center;margin-bottom:10px"><span class="prod-ico" style="width:52px;height:52px;font-size:1.6rem">${productIcon(p)}</span>
-        <div><b>${p.name}</b>${p.brand ? `<div class="sk-meta">${p.brand}</div>` : ""}<div class="sk-meta">${p.category || ""} · сейчас ${amt ? formatAmount(amt, p) : "нет"}</div></div></div>` : ""}
+        <div><b>${p.name}</b>${p.brand ? `<div class="sk-meta">${p.brand}</div>` : ""}<div class="sk-meta">сейчас ${amt ? formatAmount(amt, p) : "нет"}</div></div></div>` : ""}
       ${p ? kbjuTable(p, amt || (p.unit === "pcs" ? 1 : 100)) : ""}
       <div class="sk-plan-form" style="margin-top:12px">
         ${!p ? `<label class="sk-field span-2">Название нового продукта<input class="sk-input" id="pm-name" placeholder="например: рисовая лапша" /></label>` : ""}
+        <label class="sk-field span-2">Категория
+          <input class="sk-input" id="pm-cat" list="pm-cat-list" value="${(curCat || "").replace(/"/g, "&quot;")}" placeholder="молочка, мясо, алкоголь…" />
+          <datalist id="pm-cat-list">${cats.map((c) => `<option value="${c.replace(/"/g, "&quot;")}"></option>`).join("")}</datalist>
+        </label>
         <label class="sk-field">Количество<input class="sk-input" type="number" min="0" step="any" id="pm-qty" value="${mode.startsWith("restock") ? "" : disp.qty}" placeholder="число" /></label>
         <label class="sk-field">Единица
           <select class="sk-select" id="pm-unit">${(p ? unitOptions(p) : ALL_UNITS).map((u) => `<option value="${u.value}" ${u.value === disp.unit ? "selected" : ""}>${u.label}</option>`).join("")}</select>
@@ -169,14 +188,17 @@ export function createStockUi(ctx) {
 
     $("#pm-save").onclick = async () => {
       let prod = p;
+      const catVal = ($("#pm-cat")?.value || "").trim() || "своё";
+      const brandVal = $("#pm-brand").value.trim();
       if (!prod) {
         const name = $("#pm-name").value.trim();
         if (!name) return toast("Укажите название");
         prod = registerCustomProduct({
           name,
           unit: $("#pm-unit").value,
-          brand: $("#pm-brand").value.trim(),
+          brand: brandVal,
           photo: photoData,
+          category: catVal,
         });
       }
       const addAmt = toBaseAmount(+$("#pm-qty").value || 0, $("#pm-unit").value, prod);
@@ -184,22 +206,16 @@ export function createStockUi(ctx) {
       const zone = $("#pm-zone").value;
       if (!state.settings.invZones) state.settings.invZones = {};
       state.settings.invZones[prod.id] = zone;
+      const metaPatch = { category: catVal, brand: brandVal };
+      if (photoData) metaPatch.photo = photoData;
+      setProductMeta(prod.id, metaPatch);
       const patch = {
         zone,
         boughtAt: $("#pm-bought").value || null,
         expiresAt: $("#pm-exp").value || null,
         note: $("#pm-note").value.trim(),
-        brand: $("#pm-brand").value.trim(),
+        brand: brandVal,
       };
-      if (photoData) {
-        prod.photo = photoData;
-        const custom = state.settings.customProducts.find((x) => x.id === prod.id);
-        if (custom) custom.photo = photoData;
-        if ($("#pm-brand").value.trim()) {
-          prod.brand = $("#pm-brand").value.trim();
-          if (custom) custom.brand = prod.brand;
-        }
-      }
       if (mode.startsWith("restock")) {
         state.inventory = addInvAmount(state.inventory, prod.id, addAmt, patch);
       } else {
@@ -233,10 +249,12 @@ export function createStockUi(ctx) {
       </div>
       <button class="sk-btn sk-btn-ghost sk-btn-block" id="rs-new">Создать новый продукт</button>`;
     const ac = $("#rs-ac");
-    $("#rs-q").oninput = () => {
-      const q = $("#rs-q").value.trim().toLowerCase();
+    const rsQ = $("#rs-q");
+    rsQ.oninput = () => {
+      const q = rsQ.value.trim().toLowerCase();
       if (q.length < 1) {
         ac.style.display = "none";
+        ac.innerHTML = "";
         return;
       }
       const hits = allProducts().filter((p) => p.name.toLowerCase().includes(q)).slice(0, 12);
@@ -245,6 +263,7 @@ export function createStockUi(ctx) {
         .map((p) => `<button type="button" data-id="${p.id}">${productIcon(p)} ${p.name} <span class="sk-meta">${p.category || ""}</span></button>`)
         .join("");
       ac.querySelectorAll("button").forEach((b) => {
+        b.onmousedown = (e) => e.preventDefault();
         b.onclick = () => openProductModal(b.dataset.id, "restock");
       });
     };
@@ -277,17 +296,50 @@ export function createStockUi(ctx) {
     renderProducts($("#inv-body"));
   }
 
-  function renderProducts(body) {
+  function filteredProducts() {
     const filter = state._invFilter || "have";
     const zoneF = state._invZone || "all";
     const q = (state._invQ || "").trim().toLowerCase();
-    const cats = [...new Set(allProducts().map((p) => p.category).filter(Boolean))].sort();
+    let list = allProducts().slice();
+    if (filter === "have") list = list.filter((p) => invAmount(state.inventory, p.id) > 0);
+    else if (filter === "expiring") list = list.filter((p) => expiringIds().has(p.id));
+    else if (filter !== "all") list = list.filter((p) => p.category === filter);
+    if (zoneF !== "all") list = list.filter((p) => guessZone(p) === zoneF);
+    if (q) list = list.filter((p) => p.name.toLowerCase().includes(q) || (p.brand || "").toLowerCase().includes(q) || (p.category || "").toLowerCase().includes(q));
+    return list;
+  }
+
+  function paintInvRows() {
+    const tb = $("#inv-tb");
+    if (!tb) return;
+    tb.innerHTML = "";
+    filteredProducts().forEach((p) => {
+      const amt = invAmount(state.inventory, p.id);
+      const lot = state.inventory[p.id] || {};
+      const st = expiryStatus(lot.expiresAt);
+      const tr = document.createElement("tr");
+      tr.className = `inv-row ${amt ? "has" : ""} exp-${st}`;
+      tr.style.cursor = "pointer";
+      tr.innerHTML = `<td>${p.photo ? `<img src="${p.photo}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:10px" />` : `<span class="prod-ico">${productIcon(p)}</span>`}</td>
+        <td><b>${p.name}</b>${p.brand ? `<div class="sk-meta">${p.brand}</div>` : ""}<div class="sk-meta">${p.category || ""}</div></td>
+        <td>${amt ? formatAmount(amt, p) : "—"}</td>
+        <td>${ZONE_LABEL[guessZone(p)]}</td>
+        <td>${lot.expiresAt || "—"}</td>`;
+      tr.onclick = () => openProductModal(p.id, "edit");
+      tb.appendChild(tr);
+    });
+  }
+
+  function renderProducts(body) {
+    const filter = state._invFilter || "have";
+    const zoneF = state._invZone || "all";
+    const cats = categoryOptions();
 
     body.innerHTML = `
       <div class="sk-card tone" style="margin-bottom:12px">
         <div class="sk-chip-row" id="quick"></div>
         <div class="sk-row">
-          <label class="sk-field" style="flex:1;min-width:160px">Поиск<input class="sk-input" id="inv-q" value="${state._invQ || ""}" /></label>
+          <label class="sk-field" style="flex:1;min-width:160px">Поиск<input class="sk-input" id="inv-q" value="${(state._invQ || "").replace(/"/g, "&quot;")}" autocomplete="off" /></label>
           <label class="sk-field">Показ
             <select class="sk-select" id="inv-cat">
               <option value="have" ${filter === "have" ? "selected" : ""}>Что есть</option>
@@ -306,7 +358,7 @@ export function createStockUi(ctx) {
       </div>
       <div class="inv-table-wrap"><table class="sk-table inv-table"><thead><tr><th></th><th>Продукт</th><th>Кол-во</th><th>Зона</th><th>Срок</th></tr></thead><tbody id="inv-tb"></tbody></table></div>`;
 
-    QUICK.forEach(([id, amt]) => {
+    QUICK.forEach(([id]) => {
       const p = state.cat.products[id];
       if (!p) return;
       const b = document.createElement("button");
@@ -317,42 +369,20 @@ export function createStockUi(ctx) {
       $("#quick").appendChild(b);
     });
 
-    let list = allProducts().slice();
-    if (filter === "have") list = list.filter((p) => invAmount(state.inventory, p.id) > 0);
-    else if (filter === "expiring") list = list.filter((p) => expiringIds().has(p.id));
-    else if (filter !== "all") list = list.filter((p) => p.category === filter);
-    if (zoneF !== "all") list = list.filter((p) => guessZone(p) === zoneF);
-    if (q) list = list.filter((p) => p.name.toLowerCase().includes(q) || (p.brand || "").toLowerCase().includes(q));
-
-    const tb = $("#inv-tb");
-    list.forEach((p) => {
-      const amt = invAmount(state.inventory, p.id);
-      const lot = state.inventory[p.id] || {};
-      const st = expiryStatus(lot.expiresAt);
-      const tr = document.createElement("tr");
-      tr.className = `inv-row ${amt ? "has" : ""} exp-${st}`;
-      tr.style.cursor = "pointer";
-      tr.innerHTML = `<td>${p.photo ? `<img src="${p.photo}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:10px" />` : `<span class="prod-ico">${productIcon(p)}</span>`}</td>
-        <td><b>${p.name}</b>${p.brand ? `<div class="sk-meta">${p.brand}</div>` : ""}<div class="sk-meta">${p.category || ""}</div></td>
-        <td>${amt ? formatAmount(amt, p) : "—"}</td>
-        <td>${ZONE_LABEL[guessZone(p)]}</td>
-        <td>${lot.expiresAt || "—"}</td>`;
-      tr.onclick = () => openProductModal(p.id, "edit");
-      tb.appendChild(tr);
-    });
+    paintInvRows();
 
     $("#inv-q").oninput = (e) => {
       state._invQ = e.target.value;
       clearTimeout(state._invQTimer);
-      state._invQTimer = setTimeout(() => renderInventory(), 150);
+      state._invQTimer = setTimeout(() => paintInvRows(), 120);
     };
     $("#inv-cat").onchange = (e) => {
       state._invFilter = e.target.value;
-      renderInventory();
+      paintInvRows();
     };
     $("#inv-zone").onchange = (e) => {
       state._invZone = e.target.value;
-      renderInventory();
+      paintInvRows();
     };
   }
 
@@ -509,11 +539,13 @@ export function createStockUi(ctx) {
     let pickedProd = null;
     let photoData = "";
     const ac = $("#shop-ac");
-    $("#shop-text").oninput = () => {
-      const q = $("#shop-text").value.trim().toLowerCase();
+    const shopText = $("#shop-text");
+    shopText.oninput = () => {
+      const q = shopText.value.trim().toLowerCase();
       pickedProd = null;
       if (q.length < 1) {
         ac.style.display = "none";
+        ac.innerHTML = "";
         return;
       }
       const hits = allProducts().filter((p) => p.name.toLowerCase().includes(q)).slice(0, 10);
@@ -522,14 +554,21 @@ export function createStockUi(ctx) {
         .map((p) => `<button type="button" data-id="${p.id}">${productIcon(p)} ${p.name}</button>`)
         .join("");
       ac.querySelectorAll("button").forEach((b) => {
+        b.onmousedown = (e) => e.preventDefault();
         b.onclick = () => {
           pickedProd = state.cat.products[b.dataset.id];
-          $("#shop-text").value = pickedProd.name;
+          shopText.value = pickedProd.name;
           const opts = unitOptions(pickedProd);
           $("#shop-unit").innerHTML = opts.map((u) => `<option value="${u.value}">${u.label}</option>`).join("");
           ac.style.display = "none";
+          shopText.focus();
         };
       });
+    };
+    shopText.onblur = () => {
+      setTimeout(() => {
+        if (!ac.contains(document.activeElement)) ac.style.display = "none";
+      }, 180);
     };
     $("#shop-photo")?.addEventListener("change", (e) => {
       const file = e.target.files?.[0];
@@ -599,7 +638,7 @@ export function createStockUi(ctx) {
       items.forEach((it) => {
         const p = it.productId ? state.cat.products[it.productId] : null;
         const fromPlan = it.source === "plan";
-        const qtyLocked = fromPlan || it.done;
+        const qtyLocked = !!it.done;
         const row = document.createElement("div");
         row.className = `shop-item ${it.done ? "done" : ""}`;
         const unitSel = (p ? unitOptions(p) : ALL_UNITS)
@@ -646,7 +685,6 @@ export function createStockUi(ctx) {
           <button type="button" class="shop-del">×</button>`;
 
         const syncAmount = async () => {
-          if (fromPlan) return;
           const qty = +row.querySelector("[data-qty]").value || 0;
           const unit = row.querySelector("[data-unit]").value;
           it.qty = qty;

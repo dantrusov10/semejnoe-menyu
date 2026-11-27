@@ -110,12 +110,28 @@ function mergeCustomProducts() {
     state.cat.products[p.id] = p;
     if (!state.data.products.find((x) => x.id === p.id)) state.data.products.push(p);
   }
+  const meta = state.settings.productMeta || {};
+  for (const [id, m] of Object.entries(meta)) {
+    const p = state.cat.products[id];
+    if (!p || !m) continue;
+    if (m.category != null) p.category = m.category;
+    if (m.brand != null) p.brand = m.brand;
+    if (m.photo != null) p.photo = m.photo;
+  }
+}
+
+function isTyping() {
+  const a = document.activeElement;
+  if (!a) return false;
+  const tag = a.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || a.isContentEditable;
 }
 
 async function loadLocal() {
   state.settings = { ...defaultSettings(), ...(await dbGet("settings", {})) };
   if (!Array.isArray(state.settings.mealStock)) state.settings.mealStock = [];
   if (!Array.isArray(state.settings.customProducts)) state.settings.customProducts = [];
+  if (!state.settings.productMeta || typeof state.settings.productMeta !== "object") state.settings.productMeta = {};
   if (!state.settings.period) state.settings.period = defaultSettings().period;
   if (state.settings.alcoholBudget == null) {
     state.settings.alcoholBudget = (state.settings.wineBudget || 0) + (state.settings.ginBudget || 0);
@@ -811,7 +827,7 @@ function renderStats() {
         ${[
           ["kpis", "Сводка"],
           ["timeline", "По дням"],
-          ["contours", "Контуры трат"],
+          ["contours", "Категории трат"],
           ["meals", "Приёмы пищи"],
           ["products", "Товары"],
           ["cooks", "Готовки"],
@@ -822,12 +838,12 @@ function renderStats() {
           )
           .join("")}
       </div>
-      <p class="sk-meta">Контуры: готовка · алкоголь (вино+джин) · вкусняшки · сладкое/к чаю · прочее (разовое без категории). Приёмы — из отметок «Приготовил».</p>
+      <p class="sk-meta">Категории: готовка · алкоголь (вино+джин) · вкусняшки · сладкое/к чаю · прочее (разовое без тега). Приёмы — из отметок «Приготовил».</p>
     </div>
     <div id="stat-kpis" class="sk-stat-row" style="${vis.kpis ? "" : "display:none"}"></div>
     <div class="sk-grid" style="margin-top:12px">
       <div class="sk-col-6" id="blk-timeline" style="${vis.timeline ? "" : "display:none"}"><div class="sk-card"><h3>Траты по дням</h3><div class="chart-box"><canvas id="chart-timeline"></canvas></div></div></div>
-      <div class="sk-col-6" id="blk-contours" style="${vis.contours ? "" : "display:none"}"><div class="sk-card"><h3>Контуры расходов</h3><p class="sk-meta">Куда уходят деньги</p><div class="chart-box"><canvas id="chart-cat"></canvas></div><div id="cat-legend" class="sk-meta" style="margin-top:8px"></div></div></div>
+      <div class="sk-col-6" id="blk-contours" style="${vis.contours ? "" : "display:none"}"><div class="sk-card"><h3>Категории расходов</h3><p class="sk-meta">Куда уходят деньги</p><div class="chart-box"><canvas id="chart-cat"></canvas></div><div id="cat-legend" class="sk-meta" style="margin-top:8px"></div></div></div>
       <div class="sk-col-6" id="blk-meals" style="${vis.meals ? "" : "display:none"}"><div class="sk-card"><h3>Приёмы пищи</h3><p class="sk-meta">Сколько раз готовили · ₽ по приёму (если отмечено)</p><div class="chart-box"><canvas id="chart-meals"></canvas></div></div></div>
       <div class="sk-col-6" id="blk-meal-spend" style="${vis.meals ? "" : "display:none"}"><div class="sk-card"><h3>Готовка по приёмам ₽</h3><div class="chart-box"><canvas id="chart-meal-spend"></canvas></div></div></div>
       <div class="sk-col-12" id="blk-products" style="${vis.products ? "" : "display:none"}"><div class="sk-card"><h3>Популярные товары</h3><div style="overflow:auto"><table class="sk-table" id="pop-table"><thead><tr><th>#</th><th>Товар</th><th>Раз</th><th>Кол-во</th><th>Сумма</th></tr></thead><tbody></tbody></table></div></div></div>
@@ -1116,6 +1132,7 @@ async function boot() {
     if (document.visibilityState === "visible") {
       syncPull(true)
         .then(() => {
+          if (isTyping()) return;
           if (["inventory", "plan", "today"].includes(state.screen)) renderScreen();
         })
         .catch(() => {});
@@ -1125,7 +1142,9 @@ async function boot() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       syncPull(true)
-        .then(() => renderScreen())
+        .then(() => {
+          if (!isTyping()) renderScreen();
+        })
         .catch(() => {});
     }
   });
