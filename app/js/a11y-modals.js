@@ -71,7 +71,12 @@ export function openSkModal(el, opts = {}) {
   }
   requestAnimationFrame(() => {
     const nodes = focusables(el);
-    const prefer = el.querySelector(".sk-modal-close") || nodes[0];
+    const prefer =
+      el.querySelector(
+        'input:not([type="hidden"]):not([type="file"]):not([disabled]), textarea:not([disabled]), select:not([disabled])'
+      ) ||
+      nodes.find((n) => !n.classList.contains("sk-modal-close")) ||
+      nodes[0];
     prefer?.focus?.();
   });
 }

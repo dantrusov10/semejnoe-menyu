@@ -41,6 +41,12 @@ body {
   overflow-x: hidden;
   overscroll-behavior-y: contain;
   -webkit-tap-highlight-color: transparent;
+}
+button,
+.sk-btn,
+.sk-chip,
+.sk-tabbar button,
+.sk-menu-btn {
   touch-action: manipulation;
 }
 body.sk-drawer-open {
@@ -577,16 +583,21 @@ tr.inv-detail td { background: var(--surface-2); padding: 12px 14px; }
 }
 .sk-field input,
 .sk-field select,
+.sk-field textarea,
 .sk-input,
-.sk-select {
+.sk-select,
+textarea.sk-input {
   min-height: var(--touch);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   background: #fff;
   min-width: 110px;
+  /* ≥16px: иначе iOS/PWA зумит поле и срывает ввод */
+  font-size: 16px;
+  line-height: 1.35;
 }
-.sk-input-lg { min-height: 52px; font-size: 1.05rem; width: 100%; }
+.sk-input-lg { min-height: 52px; font-size: 16px; width: 100%; }
 
 .sk-btn {
   border: 0;
@@ -1178,10 +1189,11 @@ textarea.sk-input {
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   }
   .sk-modal-close {
-    position: fixed;
+    position: sticky;
     top: calc(8px + env(safe-area-inset-top, 0px));
-    right: 10px;
+    float: right;
     z-index: 2;
+    margin: 0 0 8px 8px;
     background: var(--surface);
   }
   .sk-plan-form { grid-template-columns: 1fr; }

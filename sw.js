@@ -1,5 +1,5 @@
 /* Service worker: оболочка всегда с сети без HTTP-кэша; офлайн — из Cache Storage */
-const CACHE = "sk-shell-v15";
+const CACHE = "sk-shell-v16";
 const ASSETS = [
   "./",
   "./index.html",
